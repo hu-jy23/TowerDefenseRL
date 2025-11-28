@@ -11,7 +11,7 @@ from custom_callbacks.tensor_board_info import TensorboardInfoCallback
 from custom_callbacks.save_agent_actions import SaveAgentActionsCallback
 import argparse
 
-hours_to_train = 8
+hours_to_train = 1
 video_number = 10 # number of videos to record during training
 
 mean_time_fps = 330 # ~mean time/fps from tensor board, steps per second (obviously varies)
@@ -32,7 +32,7 @@ def main(load_model_path, random_maps_path):
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     env = gym.make(env_name)
-    env = wrap_env(env, episode_recording_gap, prefix)
+    #env = wrap_env(env, episode_recording_gap, prefix)
 
     if random_maps_path:
         with open(random_maps_path, "r") as f:

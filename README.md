@@ -12,11 +12,13 @@ Reinforcement learning agent for my [Tower Defense Game](https://github.com/Jack
 - Random map selection during training for better generalization
 
 # TODO list
-1. - [ ] agent 只要返回就返回有意义的action，减少mask的使用 -- 目前的mask是“事后惩罚”，而不是“事前禁止”
-2. - [ ] DQN 实现，baseline DQN v.s. PPO 官方实现
+“事前禁止”
+1. - [ ] 跑通sb3-DQN ，baseline DQN v.s. PPO 官方实现
+2. - [ ] handmade DQN
 3. - [ ] DQN 优化（缩小 action space / double DQN / dueling DQN， offline study）
-4. - [ ] 是否可以引入人类先验？如何表示人类策略？（模仿学习 / 离线 RL）
-5. - [ ] 引入LLM 作为策略指导/打分
+4. - [ ] agent 只要返回就返回有意义的action，减少mask的使用 -- 目前的mask是“事后惩罚”，而不是“事前禁止”
+5. - [ ] 是否可以引入人类先验？如何表示人类策略？（模仿学习 / 离线 RL）
+6. - [ ] 引入LLM 作为策略指导/打分
 
 ## Installation
 ### 注意
@@ -365,3 +367,126 @@ In the `logs/` directory, a log file containing training metrics (visible via Te
       - − 掉命：每点生命 -20
       - − 游戏结束：-100
       - 额外：若步进请求因非法动作被服务器拒绝（如放在路径上/占用格），本步直接记 -1，并返回“未更新”的观测，见 81–86。
+
+## 状态 s 与观测 o 的关系
+
+  - s 是服务端游戏引擎的真实状态（时间、波数、金钱、生命、塔列表、敌人列表、路径进度等，见 TowerDefenseGame/src/
+    api.ts:101 与 GameEngine 相关模块）。
+  - o 是按上述规则把 s 归一化/铺平成固定长度向量后的结果，供策略网络直接输入；agent 不读原始图像。
+  ## Episode 与 done 定义
+
+  - 终止 terminated 条件（任一为真），见 69–87 与 87 之后逻辑：
+      - gameOver=true，或达上限：波数≥50、金钱≥999（这些上限由 /info 提供，TowerDefenseGame/src/api.ts:200）
+  - 截断 truncated 条件：游戏时间≥1300（同样来自 /info，TowerDefenseGame/src/api.ts:200）
+  - reset 返回初始观测与 info，见 55–67。
+
+## 训练时 agent 实际“读到的数据”
+
+  - 每一步：o_t（约 1697 维 float32 向量）、可选动作掩码 m_t（长度 A+T+X+Y 的布尔串）、根据策略采样的 a_t（4 维
+    MultiDiscrete）、环境反馈 r_t、下一个 o_{t+1}，以及 done 标志。
+  - info 只用于日志/回调（波数、各塔数量、本回合动作序列等），不进入策略更新，见 173–184 与自定义回调 TowerDefenseRL/
+    custom_callbacks/*。
+  - 渲染帧仅用于可视化/录像，不参与训练输入，见 render 定义 69 之后与 TowerDefenseRL/gymnasium_env/envs/
+    tower_defense_world.py:69–87。
+
+## Reward
+  - 奖励 r_t 的分解（对应环境里的奖励函数，见 TowerDefenseRL/gymnasium_env/envs/tower_defense_world.py:223）
+      - +1 击杀奖励：这步敌人数量从 2 变 1，多了1个击杀 → +1
+      - +6 过波奖励：波数从 2 升到 3，规则是“新波数×2” → 3×2=+6
+      - 0 建塔奖励：这步没新建塔 → 0
+      - −2 囤钱惩罚：钱=52，最贵塔=50，超过部分罚 (52-50)=−2
+      - −20 掉命惩罚：掉了 1 条命 → −20
+      - 0 结束惩罚：没结束 → 0
+      - 合计：1 + 6 − 2 − 20 = −15
+  - 观测 o_{t+1} 的关键变化（对应观测编码函数，见 TowerDefenseRL/gymnasium_env/envs/tower_defense_world.py:136）
+      - [1] 波数归一化：从 2/50 变 3/50=0.06（波数上升）
+      - [3] 生命归一化：从 2/3≈0.667 变 1/3≈0.333（少了一条命）
+      - 敌人槽位：这步后“存活的敌人数量”从 2 变 1
+          - 环境会按当前敌人列表，重头把“第 0 槽、1 槽、…”依次填上 active=1 的敌人特征，其余槽清零
+          - 所以你看到的是“前面若干槽 active=1，后面的槽 active=0”；从 2→1 的变化就是有一个槽从一整段非零变成全 0
+
+# DQN
+› 能调包吗？自己实现困难吗？
+
+
+• 结论
+
+  - 直接“调包用 DQN”可以，但要先把动作空间从 MultiDiscrete([2,3,18,12]) 扁平成 Discrete(1296)。SB3 的 DQN不支持
+    MultiDiscrete。
+  - 自己实现 DQN 难度不高，但要做的工程比直接用 SB3 大很多；而且本项目的动作巨大且带掩码，纯 DQN 学习效率会明显弱
+    于 MaskablePPO。
+
+  能否“调包”
+
+  - 可以：用 Stable-Baselines3 的 DQN（或 sb3_contrib 的 QRDQN），前提是把动作改造为 Discrete。
+  - 不能直接对接 MultiDiscrete：SB3 的 DQN不支持 MultiDiscrete/动作掩码。
+
+  推荐接入方案（最小改动）
+
+  - 用一个 ActionWrapper 把 MultiDiscrete 扁平化：
+      - n_actions = 2318*12 = 1296
+      - 扁平编码：idx = a*(TXY) + t*(XY) + x(Y) + y
+      - 反解码：依次整除取模还原 [a,t,x,y]
+  - 在 train.py 的 make_model 里加一个 “dqn” 分支，用 SB3 DQN 包起来训练。
+
+  样例代码（可直接放进 repo）
+
+  - 扁平动作包装器（新建 gymnasium_env/wrappers/flatten_multidiscrete.py）：
+      - 逻辑：新 action_space 改为 Discrete(n_actions)，step 时把离散 id 解码成原 MultiDiscrete 向量后再转发给底层 env。
+  - 训练脚本改动思路（在 TowerDefenseRL/train.py 的 make_model 加一个 elif algo == "dqn":）
+      - from stable_baselines3 import DQN
+      - 包装 env：env = FlattenMultiDiscreteAction(env)
+      - model = DQN("MlpPolicy", env, learning_rate=3e-4, buffer_size=100_000, batch_size=256, train_freq=4,
+        target_update_interval=1_000, learning_starts=10_000, gamma=0.99, verbose=1, tensorboard_log="./logs/")
+  注意事项与风险
+
+  - 动作掩码会丢失：DQN 没有 Maskable 版本。非法动作（建塔钱不够/未解锁/占用/在路径上）会被环境以 -1 轻罚处理，探索时会
+    经常撞到，学习效率比 MaskablePPO 差。
+  - 大动作空间：离散 1296 维 Q 输出，收敛更慢。建议：
+      - 调大学习网络：policy_kwargs=dict(net_arch=[1024, 1024])
+      - 合理探索策略：exploration_fraction≈0.2、final_eps≈0.05
+
+  接入结果
+
+  - 新增包装器：gymnasium_env/wrappers/flatten_multidiscrete.py 将 MultiDiscrete([A,T,X,Y]) 扁平成 Discrete(A*T*X*Y)，供
+    SB3 DQN 使用。
+  - 扩展训练脚本：TowerDefenseRL/train.py:1 支持 --algo dqn_sb3（别名 dqn）。内部自动包上扁平包装器，再构建 SB3 DQN。
+  - 超参默认（可调）：buffer_size=100k, batch_size=256, train_freq=4, target_update_interval=2500, learning_starts=10k,
+    gamma=0.99, exploration_fraction=0.2, exploration_final_eps=0.05, net_arch=[1024,1024], lr=3e-4。
+
+  如何运行
+
+  - PPO（原样）：
+      - python train.py --algo ppo
+  - DQN（SB3 版）：
+      - python train.py --algo dqn_sb3
+      - 也可用别名：python train.py --algo dqn
+  - 其余参数沿用现有脚本：可加 --random-maps custom-maps.json（注意下方“地图一致性”）、或 --load-model 续训。
+
+  文件与改动
+
+  - 新增: TowerDefenseRL/gymnasium_env/wrappers/flatten_multidiscrete.py
+      - 将 [a,t,x,y] 编码为单一 action_id ∈ [0, 1296) 并在 step() 中解码回去。
+  - 修改: TowerDefenseRL/train.py:1
+      - 新增 from stable_baselines3 import DQN 与 from gymnasium_env.wrappers.flatten_multidiscrete import
+        FlattenMultiDiscreteAction
+      - 在 make_model() 中加入 elif algo in ("dqn", "dqn_sb3"): 分支，自动包裹扁平化动作并创建/加载 DQN。
+      - CLI 帮助文案包含 ppo | dqn_sb3。
+
+  注意事项（强烈建议先按此来）
+
+  - 地图一致性：现环境的观测 shape 在构造时由“初始地图”确定。若用随机地图训练，请确保所有地图的 path_cells 数量一致，否
+    则建议先不要启用随机地图，或等我们改为固定维的“网格图特征”。PPO/DQN 都受此约束。
+  - 动作掩码：DQN 不支持动作掩码。非法坐标/未解锁/钱不够会被环境以 -1 轻罚来兜底，探索阶段会更频繁撞到无效动作，收敛慢于
+    MaskablePPO 属正常现象。可通过加大网络/回放/训练步数来弥补。
+  - 回调兼容：Checkpoint/TensorBoard/“最佳动作保存”在 DQN 路径下依然可用；日志节奏与 PPO 略有差异但不影响使用。
+
+  后续：handy DQN 端口
+
+  - 你可以新增 --algo dqn_handy 分支，逐步实现以下模块对齐 SB3 DQN：
+      - Q 网络（MLP 输出 1296 维）、目标网络、重放缓冲、ε-greedy 探索、训练循环（train_freq/target_update 逻辑）
+      - 对照我设的 SB3 超参逐一复现，保证 fair 对比
+  - 我可以帮你脚手架 dqn_handy 的最小可运行版本，再逐个模块替换/优化（双重 DQN、Dueling、优先经验回放等）。
+
+  需要我现在把 --algo dqn_handy 的空分支先加好并放一个最小骨架（含 ReplayBuffer/网络/训练循环）吗？你可以边跑 sb3 版作为
+  对照，边完善自研版。

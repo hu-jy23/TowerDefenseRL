@@ -254,7 +254,7 @@ class TowerDefenseWorldEnv(gym.Env):
 
         # - game over, for the illegal actions the penalty is given in step()
         if new_game_state["gameOver"]:
-            reward -= 100
+            reward -= 1000
 
         return round(reward)
 

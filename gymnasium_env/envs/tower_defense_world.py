@@ -150,6 +150,7 @@ class TowerDefenseWorldEnv(gym.Env):
 
         # tower features normalized
         for idx, tower in enumerate(self.game_state["towers"]):
+#注意self.global_feature_count = 5+len(self.path_cells_coordinates_normalized) # game time, wave number, money, lives, game over, path cells coordinates
             offset = self.global_feature_count + idx * self.features_per_tower
             observation[offset] = 1 # active
             observation[offset+1] = tower["position"]["x"] / self.game_info["map"]["width"] # normalized x
@@ -160,6 +161,7 @@ class TowerDefenseWorldEnv(gym.Env):
 
         # enemy features normalized
         for idx, enemy in enumerate(self.game_state["enemies"]):
+            #注意self.tower_feature_count = self.max_towers * self.features_per_tower
             offset = self.global_feature_count + self.tower_feature_count + idx * self.features_per_enemy
             observation[offset] = 1 # active
             observation[offset+1] = enemy["position"]["x"] / self.game_info["map"]["width"] # normalized x

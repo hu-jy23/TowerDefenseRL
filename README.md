@@ -11,6 +11,13 @@ Reinforcement learning agent for my [Tower Defense Game](https://github.com/Jack
 - Script for replaying the best agent game actions from training (max waves reached)
 - Random map selection during training for better generalization
 
+# TODO list
+1. - [ ] agent 只要返回就返回有意义的action，减少mask的使用 -- 目前的mask是“事后惩罚”，而不是“事前禁止”
+2. - [ ] DQN 实现，baseline DQN v.s. PPO 官方实现
+3. - [ ] DQN 优化（缩小 action space / double DQN / dueling DQN， offline study）
+4. - [ ] 是否可以引入人类先验？如何表示人类策略？（模仿学习 / 离线 RL）
+5. - [ ] 引入LLM 作为策略指导/打分
+
 ## Installation
 ### 注意
 - 先检测CUDA版本
@@ -247,3 +254,114 @@ In the `logs/` directory, a log file containing training metrics (visible via Te
     ```bash
     python replay_actions.py --load-dir ./models/date_time/best_frames
     ```
+
+
+# Infra
+## Observation
+- Observation o（代理实际可见）
+  - 类型与范围：spaces.Box(low=0.0, high=1.0, shape=(N,), dtype=float32)，见 TowerDefenseRL/gymnasium_env/envs/
+    tower_defense_world.py:42。
+  - 组成（每个分量都归一化到 [0,1]）：
+      - 全局特征（5 + 2×|path cells|），见 142 与 148：
+          - [0] 游戏时间 / 上限、[1] 波数 / 上限、[2] 金钱 / 上限、[3] 生命 / 上限、[4] gameOver(0/1)
+          - [5:] 路径上每个格子的归一化坐标 x,y 串接
+      - 塔槽位特征（固定槽位，最大塔数 × 每塔 （5+|塔类型|）），见 151–159：
+          - 每塔：active(1/0), x, y, 攻速冷却/最慢塔冷却, dps/全塔最大 dps, 以及塔类型 one-hot
+      - 敌人槽位特征（固定槽位，最大敌人数 × 每敌 （5+|敌类型|）），见 161–169：
+          - 每敌：active(1/0), x, y, 当前血量/满血, pathProgress(0..1), 敌类型 one-hot
+  - 维度如何确定（默认地图，代码取自 GameConfig）：
+      - 地图宽高 900×600，网格 50px → 18×12 共 216 格（TowerDefenseGame/src/core/GameConfig.ts:54）。
+      - 路径像素长约 2500 → 路径格数 ≈ 2500/50 = 50。
+      - 全局特征维数：5 + 2×50 = 105。
+      - 最大塔数：216 - 50 = 166；塔类型数=3 → 每塔 8 维 → 166×8=1328。
+      - 最多同时在场敌人数（保守上界）：依据波设置计算约 33 个（TowerDefenseRL/gymnasium_env/envs/
+        tower_defense_world.py:212–221）。敌类型数=3 → 每敌 8 维 → 33×8=264。
+      - 总观测维数 N ≈ 105 + 1328 + 264 = 1697。
+  - 注意：这是一条“固定长度的拼接向量”，前若干维是全局与路径常量，中间一段是塔槽位，尾部是敌人槽位，未占用槽位全 0。
+
+- 例子1：刚 reset 完（还没放塔，也没敌人）
+
+  - 全局段（索引 0..4）
+      - [0] gameTime/1300 = 0.0
+      - [1] waveNumber/50 = 0.0
+      - [2] money/999 ≈ 40/999 ≈ 0.040
+      - [3] lives/3 = 1.0
+      - [4] gameOver = 0.0
+  - 路径坐标段（索引 5..104，共 100 个数）
+      - 这是路径每个格中心的坐标按 (x/900, y/600) 依次串起来的常量。例如，假如前两个路径格中心大概是 (75,25)、(75,75)，
+        则：
+          - [5]=75/900≈0.083，[6]=25/600≈0.042
+          - [7]=75/900≈0.083，[8]=75/600=0.125
+      - 直到把约 50 个格子的 (x/900,y/600) 都放完，共 100 个值。
+  - 塔槽位段（索引 105..1432，共 166 个槽 × 8 维）
+      - 因为还没塔，全部为 0。
+  - 敌槽位段（索引 1433..1696，共 33 个槽 × 8 维）
+      - 因为还没敌，也全部为 0。
+```bash
+›     # encodes the self game state into a tensor of shape self.observation_space.shape
+      def __get_observation(self) -> np.ndarray:
+          shape = self.observation_space.shape
+          if shape is None:
+              raise ValueError("Observation space shape is not defined")
+          observation = np.zeros(shape, dtype=np.float32)
+
+          # global features normalized
+          observation[2] = self.game_state["money"] / self.game_info["max_global_info"]["money"]
+          observation[3] = self.game_state["lives"] / self.game_info["max_global_info"]["lives"]
+          observation[4] = self.game_state["gameOver"]
+          observation[5:5+len(self.path_cells_coordinates_normalized)] = self.path_cells_coordinates_normalized
+          #observation[4:4+self.map_horizontal_cells*self.map_vertical_cells] = self.__calculate_grid_map()
+
+          # tower features normalized
+          for idx, tower in enumerate(self.game_state["towers"]):
+  #注意self.global_feature_count = 5+len(self.path_cells_coordinates_normalized) # game time, wave number, money, lives,
+  game over, path cells coordinates
+              offset = self.global_feature_count + idx * self.features_per_tower
+              observation[offset] = 1 # active
+              observation[offset+1] = tower["position"]["x"] / self.game_info["map"]["width"] # normalized x
+              observation[offset+2] = tower["position"]["y"] / self.game_info["map"]["height"] # normalized y
+              observation[offset+3] = tower["attackCooldown"] / self.game_info["slower_tower_sample"]["attackCooldown"]
+  # normalized attack cooldown
+              observation[offset+4] = self.tower_types[self.tower_type_to_index[tower["type"]]]["dps"] /
+  self.max_tower_dps # normalized dps
+              observation[offset+5+self.tower_type_to_index[tower["type"]]] = 1 # one-hot encoding type
+
+          # enemy features normalized
+          for idx, enemy in enumerate(self.game_state["enemies"]):
+              #注意self.tower_feature_count = self.max_towers * self.features_per_tower
+              offset = self.global_feature_count + self.tower_feature_count + idx * self.features_per_enemy
+              observation[offset] = 1 # active
+              observation[offset+1] = enemy["position"]["x"] / self.game_info["map"]["width"] # normalized x
+              observation[offset+2] = enemy["position"]["y"] / self.game_info["map"]["height"] # normalized y
+              observation[offset+3] = enemy["currentHealth"] / enemy["fullHealth"] # normalized health
+              observation[offset+4] = enemy["pathProgress"]
+              observation[offset+5+self.enemy_type_to_index[enemy["type"]]] = 1 # one-hot encoding type
+
+          return observation
+```
+### 注意这里用到的global_feature_count和tower_feature_count都是地图设定之初就设定好了的。
+- 这些 offset 与维度（global_feature_count、tower_feature_count、enemy_feature_count）确实是“由地图几何决定”的；
+- 但它们只在环境构造时（init 里第一次 GET /info）根据“当时的地图”计算一次并固定下来。之后如果用 RandomMapWrapper 在
+    reset 前换图，环境并不会重新计算这些量。除非你重建一个新的 env 实
+  例，否则它不会随每张随机地图重新定 shape 或重算这些偏移。
+          
+    observation是graph-specific的，在进入每张图初始化的时候就customize了一个observation
+
+## Action
+### Action a（代理输出）
+
+  - 空间：spaces.MultiDiscrete([A, T, X, Y])，见 TowerDefenseRL/gymnasium_env/envs/tower_defense_world.py:29。
+      - A=动作类型数；T=塔类型数；X/Y=横纵坐标格数。
+      - 默认配置下：A=2（NONE、BUILD_TOWER，见 TowerDefenseGame/src/api.ts:208）、T=3（archer/cannon/sniper，
+        GameConfig.ts:118）、X=18、Y=12。
+  - 语义（step 时如何落地），见 TowerDefenseRL/gymnasium_env/envs/tower_defense_world.py:70–76：
+      - 如果选的是 BUILD_TOWER，会把塔类型与格点转换为像素中心坐标并提交给服务端。
+      - 如果选 NONE，坐标与塔型分量被忽略（仍占位于动作向量中）。
+  - 动作掩码（非法动作屏蔽），见 120–133：
+      - 钱不够时禁用 BUILD_TOWER（A 维的对应类目）；
+      - 对于单个塔类型，若钱不够或未解锁则屏蔽该塔型（T 维的类目）；
+      - X/Y 维不屏蔽（MultiDiscrete 无法表达“特定格子非法”的交叉约束），坐标非法由环境返回 -1 小惩罚处理。
+      - − 持币过多（超过最贵塔价）：线性罚（鼓励把钱转换为战力）
+      - − 掉命：每点生命 -20
+      - − 游戏结束：-100
+      - 额外：若步进请求因非法动作被服务器拒绝（如放在路径上/占用格），本步直接记 -1，并返回“未更新”的观测，见 81–86。

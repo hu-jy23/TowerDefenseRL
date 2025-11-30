@@ -1,0 +1,8 @@
+{
+    "hours_to_train": 1,
+    "video_number": 10,
+    "mean_time_fps": 330,
+    "mean_episode_steps": 2500,
+    "env_name": "gymnasium_env/TowerDefenseWorld-v0",
+    "seed": 87
+}

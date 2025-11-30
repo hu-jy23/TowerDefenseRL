@@ -14,7 +14,10 @@ venv/
 .idea/
 .DS_Store
 
-# --- 强化学习训练产物 ---
+# --- 训练参数本地配置 ---
+config.json
+
+# --- 训练产物 ---
 # 忽略 Tensorboard 日志 (二进制文件，很大且无法合并)
 logs/
 tensorboard_logs/

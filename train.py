@@ -1,4 +1,5 @@
 import json
+import os
 import gymnasium_env.envs  # ensure the custom environment is registered
 import gymnasium as gym
 import logging
@@ -13,18 +14,54 @@ from custom_callbacks.tensor_board_info import TensorboardInfoCallback
 from custom_callbacks.save_agent_actions import SaveAgentActionsCallback
 import argparse
 
-# -------- 全局配置（可以改成命令行参数也行） --------
-hours_to_train = 1
-video_number = 10  # number of videos to record during training
 
-mean_time_fps = 330  # ~mean time/fps from tensor board, steps per second (obviously varies)
-mean_episode_steps = 2500  # ~mean steps per episode from tensor board (also varies)
+#  ========= 配置加载  =========
 
+def load_config():
+    """
+    加载配置优先级：
+    1. config.json (本地配置)
+    2. config.default.json (仓库默认配置)
+    3. 硬编码默认值 (下方 config 字典)
+    参数: 1. 覆盖 2. 覆盖 3.
+    """
+    config = {
+        "hours_to_train": 1,
+        "video_number": 10,
+        "mean_time_fps": 330,
+        "mean_episode_steps": 2500,
+        "env_name": "gymnasium_env/TowerDefenseWorld-v0",
+        "seed": 87
+    }
+    
+    loaded_file = "Hardcoded Defaults"
+    
+    if os.path.exists("config.json"):
+        with open("config.json", "r") as f:
+            config.update(json.load(f))
+        loaded_file = "config.json"
+    elif os.path.exists("config.default.json"):
+        with open("config.default.json", "r") as f:
+            config.update(json.load(f))
+        loaded_file = "config.default.json"
+        
+    print(f"Loaded configuration from: {loaded_file}") # 在终端确认用了哪个配置
+    return config
+
+# 加载配置
+CONFIG = load_config()
+
+# 从配置中读取参数
+hours_to_train = CONFIG["hours_to_train"]
+video_number = CONFIG["video_number"]
+mean_time_fps = CONFIG["mean_time_fps"]
+mean_episode_steps = CONFIG["mean_episode_steps"]
+env_name = CONFIG["env_name"]
+seed = CONFIG["seed"]
 training_steps = round(mean_time_fps * hours_to_train * 3600)  # total number of training steps
 episode_recording_gap = (training_steps / mean_episode_steps) // video_number  # one episode = one game
-
-env_name = "gymnasium_env/TowerDefenseWorld-v0"
-seed = 87
+if episode_recording_gap < 1:
+    episode_recording_gap = 1
 
 
 # ========= 抽出来的模块化函数 =========

@@ -1,7 +1,42 @@
-.venv/
-checkpoints/
-videos/
+# --- Python 基础 ---
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+env/
+venv/
+.venv/
+
+# --- 常用编辑器配置 ---
+.vscode/
+.idea/
+.DS_Store
+
+# --- 强化学习训练产物 ---
+# 忽略 Tensorboard 日志 (二进制文件，很大且无法合并)
+logs/
+tensorboard_logs/
+checkpoints/
+
+# 忽略训练出的模型权重 (zip文件通常很大)
 models/
-training.log
 maskable_ppo_tower_defense.zip
+*.zip
+*.pt
+*.pth
+*.pkl
+
+# 忽略训练过程中录制的视频
+videos/
+*.mp4
+
+# 忽略运行时生成的日志文件
+*.log
+training.log
+training.logs
+
+# --- 系统级忽略 ---
+# 如果你们用了 nohup 后台运行
+nohup.out

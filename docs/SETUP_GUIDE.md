@@ -1,4 +1,4 @@
-# 🛡️ TowerDefense 容器环境配置指南
+# TowerDefense 容器环境配置指南
 
 **适用环境：** 并行云 (Parallel Cloud)、Ubuntu 24.04、RTX 4090、Pytorch 2.7.0 容器
 
@@ -8,19 +8,14 @@
 
 ## 第一步：配置网络与学术加速 (基础)
 
-**目的：** 打通 HuggingFace/Github 下载通道，同时确保本地 API (Localhost) 不被代理拦截。
-
 1.  **写入配置 (一键复制运行)：**
     ```bash
     cat >> ~/.bashrc <<EOF
 
-    # --- 并行云学术加速配置 (包含 Localhost 豁免) ---
+    # --- Acceleration (Added by User) ---
     export https_proxy="http://u-UE25Z3:tXGJgV92@10.255.128.102:3128"
     export http_proxy="http://u-UE25Z3:tXGJgV92@10.255.128.102:3128"
-    # 关键：必须把 localhost,127.0.0.1 加入 no_proxy，否则 RL 连不上游戏 API
     export no_proxy="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,*.paracloud.com,*.paratera.com,*.blsc.cn,localhost,127.0.0.1"
-    # -----------------------------------------------
-    EOF
 
     # 立即生效
     source ~/.bashrc

@@ -10,16 +10,122 @@ from gymnasium import spaces
 url = "http://localhost:3000/"
 
 class TowerDefenseWorldEnv(gym.Env):
+    """
+    塔防游戏环境类，继承自 Gymnasium Env。
+    通过 HTTP 请求与运行在 localhost:3000 的游戏服务器进行交互。
+
+    Attributes:
+        render_mode (str): 渲染模式，支持 "human" 或 "rgb_array"。
+        game_info (dict): 从服务器获取的游戏初始配置信息（包含地图、塔类型、波次设置等）。
+        action_types (list): 游戏支持的动作类型列表 (如 BUILD_TOWER, NONE)。
+        tower_types (list): 游戏支持的防御塔类型列表。
+        cell_size (int): 地图网格单元的像素大小。
+        map_horizontal_cells (int): 地图水平方向的网格数。
+        map_vertical_cells (int): 地图垂直方向的网格数。
+        action_space (spaces.MultiDiscrete): 动作空间，维度为 [动作类型数, 塔类型数, x坐标数, y坐标数]。
+        observation_space (spaces.Box): 观测空间，包含全局信息、塔信息和敌人信息的扁平化向量。
+        max_towers (int): 地图上允许建造的最大防御塔数量 (网格总数 - 路径格数)。
+        max_enemies (int): 预估的同时存在的最大敌人数量 (用于固定观测空间大小)。
+        path_cells_coordinates_normalized (list[float]): 归一化后的路径单元坐标列表 [x1, y1, x2, y2, ...]。
+        global_feature_count (int): 全局特征的数量 (时间, 波数, 金钱, 生命, 游戏结束, 路径坐标序列)。
+        features_per_tower (int): 每个防御塔的特征数量。
+        tower_feature_count (int): 所有塔特征的总数量。
+        features_per_enemy (int): 每个敌人的特征数量。
+        enemy_feature_count (int): 所有敌人特征的总数量。
+        tower_type_to_index (dict): 塔类型名称到索引的映射 {'type_name': index}。
+        enemy_type_to_index (dict): 敌人类型名称到索引的映射 {'type_name': index}。
+        most_expensive_tower_cost (int): 最昂贵的塔的造价。
+        max_tower_dps (float): 所有塔中最高的 DPS (每秒伤害)。
+        game_state (dict): 当前的游戏状态数据。
+        current_episode_actions (list): 当前 episode 执行过的动作列表，用于日志或回放。
+    """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
     
     # define action_space and observation_space
     def __init__(self, render_mode="rgb_array"):
+        """
+        初始化环境，连接游戏服务器并建立动作/观测空间。
+
+        Args:
+            render_mode (str, optional): 渲染模式。默认为 "rgb_array"。
+        
+        Raises:
+            ConnectionError: 如果无法连接到游戏服务器 (localhost:3000) 或获取游戏信息失败。
+        """
         self.render_mode = render_mode
         response = requests.get(url + "info")
         if response.status_code != 200:
             raise ConnectionError(f"Failed to get game info: {response.text}")
 
         self.game_info = response.json()
+        """
+        game_info 获取游戏的配置信息，有下列字段: 
+        1. max_global_info (dict): 全局信息
+            - gameTime (int): 游戏最大时长（秒）。比如 1300。
+            - waveNumber (int): 预计最大波数。比如 50。
+            - money (int): 归一化用的金钱上限。比如 999。
+            - lives (int): 初始生命值。比如 3。
+            - gameOver (boolean): 游戏是否结束。比如 false。
+        2. actions (list): 支持的动作类型列表
+            actions = [{ "type": "NONE" }, { "type": "BUILD_TOWER", ... }]
+            - 第一个元素 {"type": "NONE"} 表示无动作。
+            - 第二个元素 {"type": "BUILD_TOWER", "towerType": "archer", "position": { "x": 0, "y": 0 } } 表示建塔动作。
+                towerType (str): 塔类型名称，比如 "archer"。
+                position (dict): 建塔位置 (position["x"], position["y"])。
+        3. map (dict): 地图信息
+            - width (int): 地图宽度（像素）。比如 900。
+            - height (int): 地图高度（像素）。比如 600。
+            - cell_size (int): 网格单元大小（像素）。比如 50。
+            - path_length (float): 敌人前进路径总长度（像素）。比如 2500.0。
+            - path_cells (list): 路径经过的所有坐标点列表。比如 [{"x": 75, "y": 25}, {"x": 75, "y": 75 }, ...]
+        4. towers (list): 防御塔类型列表
+            towers = [
+                {
+                    "type": "archer",       # type (str): 塔的名称，箭塔
+                    "range": 125,           # range (int): 攻击半径
+                    "dps": 10.0,            # dps (float): 每秒伤害 (10 伤害 / 1.0 秒间隔)
+                    "cost": 20,             # cost (int): 造价
+                    "unlock_wave": 0        # unlock_wave (int): 解锁波次，0 表示一开始就能造
+                },
+                {
+                    "type": "cannon",       # type (str): 塔的名称，炮塔
+                    "range": 75,
+                    "dps": 37.5,            # dps (float): 每秒伤害 (75 伤害 / 2.0 秒间隔)
+                    "cost": 35,
+                    "unlock_wave": 4        # unlock_wave (int): 第 4 波才解锁
+                },
+                {
+                    "type": "sniper",       # type (str): 塔的名称，狙击塔
+                    "range": 175,
+                    "dps": 25.0,            # dps (float): 每秒伤害 (75 伤害 / 3.0 秒间隔)
+                    "cost": 50,
+                    "unlock_wave": 7        # unlock_wave (int): 第 7 波才解锁
+                }
+            ]
+        5. slower_tower_sample (dict): 最慢塔样本，用于归一化。它提供了游戏中攻击速度最慢的塔数据，作为归一化的分母。
+            slower_tower_sample = {
+                "type": "sniper",
+                "position": {"x": 0, "y": 0},  # 这里的坐标没有意义，占位
+                "attackCooldown": 3.0          # attackCooldown (float): 游戏中最大的攻击冷却时间，秒
+            }
+        6. waves (dict): 敌人波次信息
+            - wave_delay (int): 波次间隔时间（秒）。比如 10。
+            - spawn_delay (float): 敌人生成间隔时间（秒）。比如 1.2。
+            - max_enemies (int): 每波敌人最大数量。比如 20。
+            - enemy_types (list): 敌人类型名称列表，固定为 ["tank", "basic", "fast"]。
+            - slower_enemy_sample (dict): 跑得最慢的敌人样本，用于估算最大同屏敌人数。
+                "slower_enemy_sample": {
+                    "type": "tank",                     # 敌人类型名称
+                    "fullHealth": 150,                  # 血量上限。不同波次可能会有倍率加成。
+                    "currentHealth": 150,               # 当前血量
+                    "currentSpeed": 40,                 # 当前移动速度（像素/秒）
+                    "position": {"x": 175, "y": 225},   # 敌人在地图上的绝对坐标（像素）。原点 (0,0) 在地图左上角。
+                    "direction": {"dx": 1, "dy": 0},    # 移动方向向量，只有 4 个方向: 右 (1,0)，下 (0,1)，左 (-1,0)，上 (0,-1)
+                    "currentWaypointIndex": 1,          # 敌人正在前往（或刚经过）的路径点的索引
+                    "pathProgress": 0                   # 敌人走完整个路径的百分比进度，范围 0.0 - 1.0
+                }
+        """
+        
         self.action_types = self.game_info["actions"]
         self.tower_types = self.game_info["towers"]
         self.cell_size = self.game_info["map"]["cell_size"]
@@ -54,6 +160,22 @@ class TowerDefenseWorldEnv(gym.Env):
 
     # reset the environment and return the initial observation and info
     def reset(self, seed=None, options=None) -> tuple[np.ndarray, dict]:
+        """
+        重置环境状态，开始新的游戏回合。
+        向服务器发送 /reset 请求以重置游戏逻辑。
+
+        Args:
+            seed (int | None, optional): 随机种子，用于复现。
+            options (dict | None, optional): 额外的重置选项。
+
+        Returns:
+            tuple[np.ndarray, dict]: 
+                - observation (np.ndarray): 初始观测向量。维度为 (total_features_count,)。
+                - info (dict): 辅助信息字典，包含游戏时间、波数、塔数量等。
+        
+        Raises:
+            ConnectionError: 如果向服务器发送重置请求失败。
+        """
         super().reset(seed=seed)
         response = requests.post(url + "reset")
         if response.status_code != 200:
@@ -68,6 +190,25 @@ class TowerDefenseWorldEnv(gym.Env):
 
     # perform the action and return the new observation, reward, terminated, truncated, info
     def step(self, action: np.ndarray) -> tuple[np.ndarray, int, bool, bool, dict]:
+        """
+        执行动作，推进环境一步。
+        将离散动作转换为游戏服务器可理解的请求参数。
+
+        Args:
+            action (np.ndarray): 动作向量。维度为 (4,)。格式为 [action_index, tower_index, x, y]。
+                - action_index: 动作类型索引 (例如 0=NONE, 1=BUILD_TOWER)。
+                - tower_index: 塔类型索引。
+                - x: 网格 X 坐标索引。
+                - y: 网格 Y 坐标索引。
+
+        Returns:
+            tuple[np.ndarray, int, bool, bool, dict]:
+                - observation (np.ndarray): 执行动作后的新观测向量。
+                - reward (int): 这一步获得的奖励值。
+                - terminated (bool): 是否因为游戏结束（胜利/失败/条件达成）而终止。
+                - truncated (bool): 是否因为时间限制（游戏时间超限）而截断。
+                - info (dict): 辅助信息字典。
+        """
         action_index, tower_index, x, y = action
         game_action = self.action_types[action_index]
         if game_action["type"] == "BUILD_TOWER":
@@ -96,6 +237,14 @@ class TowerDefenseWorldEnv(gym.Env):
 
     # returns the game state as an rgb array
     def render(self) -> np.ndarray:
+        """
+        渲染当前环境状态。
+        通过请求服务器的 /render 接口获取图像。
+
+        Returns:
+            np.ndarray: 当前帧的 RGB 图像数组。维度为 (Height, Width, 3)。
+                        如果渲染失败或模式不匹配，返回全黑图像。
+        """
         black_frame = np.zeros((self.game_info["map"]["height"], self.game_info["map"]["width"], 3), dtype=np.uint8)
         if self.render_mode == "rgb_array":
             response = requests.get(url + "render")
@@ -110,10 +259,23 @@ class TowerDefenseWorldEnv(gym.Env):
     
     # just to comply with the interface
     def close(self):
+        """
+        关闭环境，释放资源。
+        目前仅作为接口占位符。
+        """
         pass
 
     # create an action mask to disable illegal actions
     def action_masks(self) -> np.ndarray:
+        """
+        生成动作掩码，用于屏蔽非法动作（如资金不足、位置非法、未解锁等）。
+        主要用于 Maskable PPO 等支持动作掩码的算法。
+
+        Returns:
+            np.ndarray: 连接后的布尔掩码数组。
+                结构为 [action_type_mask, tower_type_mask, x_mask, y_mask]。
+                True 表示对应动作合法，False 表示非法。
+        """
         action_type_mask = np.ones(len(self.action_types), dtype=bool)
         tower_type_mask = np.ones(len(self.tower_types), dtype=bool)
         x_coordinate_mask = np.ones(self.map_horizontal_cells, dtype=bool)
@@ -134,6 +296,19 @@ class TowerDefenseWorldEnv(gym.Env):
     
     # encodes the self game state into a tensor of shape self.observation_space.shape
     def __get_observation(self) -> np.ndarray:
+        """
+        将当前游戏状态编码并归一化为观测张量。
+
+        Returns:
+            np.ndarray: 归一化并扁平化的观测向量。维度为 (total_features_count,)。
+                包含：
+                - 全局特征 (时间, 波数, 金钱, 生命, 游戏结束标志, 路径坐标序列)
+                - 塔特征列表 (每个塔: active, x, y, cooldown, dps, type_one_hot)
+                - 敌人特征列表 (每个敌人: active, x, y, health, path_progress, type_one_hot)
+        
+        Raises:
+            ValueError: 如果观测空间形状未定义。
+        """
         shape = self.observation_space.shape
         if shape is None:
             raise ValueError("Observation space shape is not defined")
@@ -150,7 +325,7 @@ class TowerDefenseWorldEnv(gym.Env):
 
         # tower features normalized
         for idx, tower in enumerate(self.game_state["towers"]):
-#注意self.global_feature_count = 5+len(self.path_cells_coordinates_normalized) # game time, wave number, money, lives, game over, path cells coordinates
+            # 注意self.global_feature_count = 5+len(self.path_cells_coordinates_normalized) # game time, wave number, money, lives, game over, path cells coordinates
             offset = self.global_feature_count + idx * self.features_per_tower
             observation[offset] = 1 # active
             observation[offset+1] = tower["position"]["x"] / self.game_info["map"]["width"] # normalized x
@@ -174,6 +349,16 @@ class TowerDefenseWorldEnv(gym.Env):
 
     # additional info for debugging or logging
     def __get_info(self, is_episode_over: bool = False) -> dict:
+        """
+        获取用于调试或日志记录的辅助信息。
+
+        Args:
+            is_episode_over (bool, optional): 当前 episode 是否结束。默认为 False。
+                如果结束，会额外包含本局的所有动作记录以便回放。
+
+        Returns:
+            dict: 包含游戏时间、波数、各类型塔的数量、以及可能的动作记录。
+        """
         info = {}
         info["game_time"] = round(self.game_state["gameTime"])
         info["wave_number"] = self.game_state["waveNumber"]
@@ -186,6 +371,13 @@ class TowerDefenseWorldEnv(gym.Env):
         return info
 
     def __normalize_path_cells(self) -> list[float]:
+        """
+        归一化地图路径单元的坐标。
+
+        Returns:
+            list[float]: 归一化后的坐标列表 [x1, y1, x2, y2, ...]。
+                每个坐标值都被除以地图的宽度或高度，值域在 [0, 1] 之间。
+        """
         normalized_coordinates = []
         for cell in self.game_info["map"]["path_cells"]:
             normalized_coordinates.append(cell["x"] / self.game_info["map"]["width"])
@@ -194,6 +386,13 @@ class TowerDefenseWorldEnv(gym.Env):
         return normalized_coordinates
     
     def __calculate_grid_map(self) -> list[float]:
+        """
+        计算网格地图的简单的占位表示 (未使用)。
+
+        Returns:
+            list[float]: 扁平化的网格地图列表。
+                0.0 = 空地, 0.5 = 路径, 1.0 = 塔。
+        """
         grid_map = [0.0] * (self.map_horizontal_cells * self.map_vertical_cells) # 0 = empty, 0.5 = path, 1 = tower
         for cell in self.game_info["map"]["path_cells"]:
             x_index = cell["x"] // self.cell_size
@@ -212,6 +411,14 @@ class TowerDefenseWorldEnv(gym.Env):
     # - Number of actual waves: N = slower enemy time to complete path / T
     # - Number of total enemies: = N * max enemies per wave
     def __calculate_total_enemies(self) -> int:
+        """
+        估算游戏中可能同时存在的最大敌人数。
+        用于确定观测空间中敌人特征部分的固定长度。
+        基于最坏情况假设：敌人存活时间最长且生成速度最快。
+
+        Returns:
+            int: 估算的最大敌人数量。
+        """
         wave_delay = self.game_info["waves"]["wave_delay"]
         wave_max_enemies = self.game_info["waves"]["max_enemies"]
         spawn_delay = self.game_info["waves"]["spawn_delay"]
@@ -224,6 +431,23 @@ class TowerDefenseWorldEnv(gym.Env):
     
     # calculate the rewards based on the new game state
     def __calculate_reward(self, new_game_state: dict) -> int:
+        """
+        根据新旧游戏状态计算奖励值。
+
+        Args:
+            new_game_state (dict): 执行动作后的新游戏状态。
+
+        Returns:
+            int: 计算得出的奖励值 (整数)。
+                奖励机制包括：
+                + 击杀敌人
+                + 完成波次
+                + 有效建造防御塔 (基于覆盖路径比例和DPS)
+                - 无效建造 (未覆盖任何路径)
+                - 囤积过多资金 (鼓励消费)
+                - 损失生命值
+                - 游戏失败
+        """
         reward = 0
         old_state = self.game_state
         # + killing enemies
@@ -260,6 +484,16 @@ class TowerDefenseWorldEnv(gym.Env):
 
     # counts how many path cells are in range of the tower
     def __count_path_cells_in_range(self, tower: dict) -> int:
+        """
+        计算防御塔攻击范围内覆盖的路径单元数量。
+        用于计算建塔奖励，鼓励将塔建在能覆盖更多路径的位置。
+
+        Args:
+            tower (dict): 防御塔的状态字典，包含位置和类型信息。
+
+        Returns:
+            int: 覆盖的路径单元数量。
+        """
         count = 0
         tower_index = self.tower_type_to_index[tower["type"]]
         tower_range = self.game_info["towers"][tower_index]["range"]

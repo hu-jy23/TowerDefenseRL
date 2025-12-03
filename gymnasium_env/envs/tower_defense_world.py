@@ -405,7 +405,7 @@ class TowerDefenseWorldEnv(gym.Env):
             is_episode_over (bool, optional): 当前 episode 是否结束。默认为 False。如果结束，会额外包含本局的所有动作记录以便回放。
 
         Returns:
-            dict: 包含游戏时间、波数、各类型塔的数量、以及可能的动作记录。
+            info (dict): 包含游戏时间、波数、各类型塔的数量、以及可能的动作记录。
         """
         info = {}
         info["game_time"] = round(self.game_state["gameTime"])

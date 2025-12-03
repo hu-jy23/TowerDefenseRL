@@ -92,6 +92,7 @@ def make_model(algo: str,
                tensorboard_log: str = "./logs/"):
     """
     根据算法名称创建/加载模型。
+    数据日志记录到 tensorboard_log 指定的目录（"./logs/"）中。
     """
     algo = algo.lower()
 
@@ -188,7 +189,7 @@ def main(load_model_path: str | None,
     run_prefix = datetime.datetime.now().strftime("%d.%m.%Y_%H.%M")
 
     logging.basicConfig(
-        filename="training.log",                                # 日志写入到 training.log 文件
+        filename="training.log",                                # 操作日志写入到 training.log 文件
         level=logging.INFO,                                     # 记录 INFO 及以上级别的日志
         format="%(asctime)s - %(levelname)s - %(message)s",     # 日志格式包含时间、级别和消息
         filemode="a",                                           # 追加模式

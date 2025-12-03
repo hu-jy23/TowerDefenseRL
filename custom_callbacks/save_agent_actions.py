@@ -11,7 +11,11 @@ class SaveAgentActionsCallback(BaseCallback):
         }
 
     def _on_step(self) -> bool:
-        if self.locals["dones"][0]: # only at the end of an episode
+        """
+        每走一步调用一次该函数。
+        """
+        # 当一局游戏结束时
+        if self.locals["dones"][0]:
             info = self.locals["infos"][0]
             if "game_time" in info and "wave_number" in info and "episode_actions" in info:
                 game_time = info["game_time"]

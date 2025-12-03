@@ -15,15 +15,12 @@ from custom_callbacks.save_agent_actions import SaveAgentActionsCallback
 import argparse
 
 
-#  ========= 配置加载  =========
-
 def load_config():
     """
-    加载配置优先级：
-    1. config.json (本地配置)
-    2. config.default.json (仓库默认配置)
-    3. 硬编码默认值 (下方 config 字典)
-    参数: 1. 覆盖 2. 覆盖 3.
+    加载配置优先级: A > B > C
+    A. config.json (本地配置)
+    B. config.default.json (仓库默认配置)
+    C. 硬编码默认值 (下方 config 字典)
     """
     config = {
         "hours_to_train": 1,
@@ -64,29 +61,27 @@ if episode_recording_gap < 1:
     episode_recording_gap = 1
 
 
-# ========= 抽出来的模块化函数 =========
-
 def make_env(random_maps_path: str | None,
              seed_value: int = seed,
              episode_gap: int = int(episode_recording_gap),
              run_prefix: str | None = None):
     """
-    创建并包装 Tower Defense 环境。
-    - 负责 gym.make + wrap_env + RandomMapWrapper
-    - 与算法无关
+    创建并返回环境。
     """
     if run_prefix is None:
         run_prefix = datetime.datetime.now().strftime("%d.%m.%Y_%H.%M")
-
+  
+    # 创建环境实例 TowerDefenseWorldEnv
     env = gym.make(env_name)
-    #env = wrap_env(env, episode_gap, run_prefix)
 
+    # 如果传了 random_maps_path，RandomMapWrapper 会让 reset() 时随机换一张新图，然后再重置游戏。
     if random_maps_path:
         with open(random_maps_path, "r") as f:
             data = json.load(f)
-        # set seed for reproducibility (same seed -> same map sequence)
-        env.reset(seed=seed_value)
+        env.reset(seed=seed_value)  # 只需要在最开始执行一次，之后不需要传入 seed，会用最开始 seed 产生的一系列序列
         env = RandomMapWrapper(env, map_list=data)
+        
+    # env = wrap_env(env, episode_gap, run_prefix)  # 录像和监控 Wrapper，用来保存视频和每一局的监控数据
 
     return env
 
@@ -97,10 +92,6 @@ def make_model(algo: str,
                tensorboard_log: str = "./logs/"):
     """
     根据算法名称创建/加载模型。
-    目前实现：
-      - ppo: MaskablePPO（与原版保持一致）
-    以后可以很方便地加：
-      - dqn / trpo / sac 等
     """
     algo = algo.lower()
 
@@ -188,20 +179,22 @@ def make_model(algo: str,
         raise ValueError(f"Unknown algorithm: {algo}. Supported: ppo")
 
 
-# ========= 主逻辑 =========
-
 def main(load_model_path: str | None,
          random_maps_path: str | None,
          algo: str):
+    """
+    主训练函数。
+    """
     run_prefix = datetime.datetime.now().strftime("%d.%m.%Y_%H.%M")
 
     logging.basicConfig(
-        filename="training.log",
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
+        filename="training.log",                                # 日志写入到 training.log 文件
+        level=logging.INFO,                                     # 记录 INFO 及以上级别的日志
+        format="%(asctime)s - %(levelname)s - %(message)s",     # 日志格式包含时间、级别和消息
+        filemode="a",                                           # 追加模式
     )
 
-    # ---- 环境创建（算法无关） ----
+    # 创建环境
     env = make_env(
         random_maps_path=random_maps_path,
         seed_value=seed,
@@ -209,18 +202,21 @@ def main(load_model_path: str | None,
         run_prefix=run_prefix,
     )
 
-    # save 3 checkpoints
+    # 三个回调函数
+    # 定期存档: 在训练过程中自动保存模型的快照（.zip 文件）。
     checkpoint_callback = CheckpointCallback(
-        save_freq=training_steps // 3,
-        save_path=f"./models/{run_prefix}/checkpoints/",
-        name_prefix=f"{algo}_tower_defense",
+        save_freq=training_steps // 3,                    # 每隔总训练步数的三分之一保存一次
+        save_path=f"./models/{run_prefix}/checkpoints/",  # 存档位置
+        name_prefix=f"{algo}_tower_defense",              # 存档文件名前缀
     )
-    # custom tensorboard callback to log wave number and tower counts
+    # 自定义 TensorBoard 回调，从环境的 info 字典里提取额外信息并记录到 TensorBoard。
     tensorboard_info_callback = TensorboardInfoCallback()
-    # custom callback to save best agent performance
+    # 保存最佳对局: 如果发现当前这一局的波数比历史最高记录还高，它就会把这一局的所有动作序列存下来。
+    # 训练结束后，可以用 replay_actions.py 直接重播“最高分”对局。
     save_actions_callback = SaveAgentActionsCallback()
 
     try:
+        # 记录训练开始信息到日志 trainning.log 里
         logging.info(f"--- Starting New Training Run ---")
         logging.info(f"Algorithm: {algo}")
         logging.info(f"Environment: {env_name} (reset seed = {seed})")
@@ -229,7 +225,7 @@ def main(load_model_path: str | None,
         )
         logging.info(f"Video Recording Period: {episode_recording_gap} games")
 
-        # ---- 模型创建/加载（算法相关） ----
+        # 创建或加载模型
         model = make_model(
             algo=algo,
             env=env,
@@ -240,13 +236,11 @@ def main(load_model_path: str | None,
         logging.info("Starting model training...")
         start = datetime.datetime.now()
 
-        # 如果是加载模型，保持 timestep 连续
-        reset_num_timesteps = not bool(load_model_path)
-
+        # 开始训练
         model.learn(
-            total_timesteps=training_steps,
-            callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],
-            reset_num_timesteps=reset_num_timesteps,
+            total_timesteps=training_steps,                                                    # 训练总步数
+            callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],  # 回调函数列表，在训练过程中会被定期调用
+            reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数
         )
 
         logging.info(
@@ -254,15 +248,16 @@ def main(load_model_path: str | None,
             f"({hours_to_train} planned)."
         )
 
-        # ---- 保存最终模型 ----
+        # 保存最终模型
         model.save(f"./models/{run_prefix}/{algo}_tower_defense.zip")
-        logging.info("Model saved.")
+        logging.info(f"Model saved in: ./models/{run_prefix}/{algo}_tower_defense.zip")
 
-        # ---- 保存最佳 episode 的动作序列 ----
+        # 保存最佳 episode 的动作序列
         best_performance_data = save_actions_callback.get_best_agent_performance()
         with open(f"./models/{run_prefix}/best_episode_actions.json", "w") as f:
             json.dump(best_performance_data, f)
-        logging.info("Best episode actions saved.")
+        logging.info(f"Best episode actions saved in: ./models/{run_prefix}/best_episode_actions.json")
+        
     except Exception as e:
         logging.error(f"An error occurred during training: {e}")
         raise e
@@ -275,12 +270,13 @@ def parse_arguments():
     parser.add_argument("--load-model", help="Optional path to the model zip file.")
     parser.add_argument(
         "--random-maps",
+        default=None,   # 默认不使用随机地图
         help="Optional path to the custom maps JSON file for random map training.",
     )
     parser.add_argument(
         "--algo",
         type=str,
-        default="ppo",
+        default="ppo",  # 默认训练 PPO
         help=(
             "RL algorithm to use. Supported: "
             "ppo | dqn_sb3 (alias: dqn). For a future handmade DQN, use a separate entry."

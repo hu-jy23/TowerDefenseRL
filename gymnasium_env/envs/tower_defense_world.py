@@ -319,12 +319,12 @@ class TowerDefenseWorldEnv(gym.Env):
     # create an action mask to disable illegal actions
     def action_masks(self) -> np.ndarray:
         """
-        生成动作掩码，用于屏蔽非法动作（如资金不足、位置非法、未解锁等）。
+        生成动作掩码，用于屏蔽非法动作（资金不足、塔未解锁）。注意摆放位置是否合法无法生成掩码，只能在 reward 里惩罚。
         主要用于 Maskable PPO 等支持动作掩码的算法。
 
         Returns:
-            np.ndarray: 连接后的布尔掩码数组。
-                结构为 [action_type_mask, tower_type_mask, x_mask, y_mask]。
+            np.ndarray: 连接后的布尔掩码数组。结构为 [action_type_mask, tower_type_mask, x_mask, y_mask]。
+                比如 [[True, True], [True, False, False], [True, True, True, ...], [True, True, True, ...]]。
                 True 表示对应动作合法，False 表示非法。
         """
         action_type_mask = np.ones(len(self.action_types), dtype=bool)

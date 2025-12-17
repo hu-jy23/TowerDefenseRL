@@ -83,7 +83,7 @@ def make_env(random_maps_path: str | None,
         
     # ------ 录像和监控 Wrapper，用来保存视频和每一局的监控数据 ------ 
     # ------ 不需要录像时可注释 ------ 
-    env = wrap_env(env, episode_gap, run_prefix)
+    # env = wrap_env(env, episode_gap, run_prefix)
     
     return env
 
@@ -143,40 +143,6 @@ def make_model(algo: str,
                 policy_kwargs=policy_kwargs,
             )
         return model
-
-    # ==== 预留扩展位：DQN / TRPO 等（示例代码，可按需启用） ====
-    # elif algo == "dqn":
-    #     from stable_baselines3 import DQN
-    #     if load_model_path:
-    #         logging.info(f"[Algo=dqn] Loading model from: {load_model_path}")
-    #         model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log)
-    #     else:
-    #         logging.info("[Algo=dqn] Creating new DQN model (MlpPolicy)")
-    #         model = DQN(
-    #             "MlpPolicy",
-    #             env,
-    #             verbose=1,
-    #             tensorboard_log=tensorboard_log,
-    #         )
-    #     return model
-
-    # elif algo == "trpo":
-    #     # 需要 stable-baselines（不是 SB3），这里只示意接口
-    #     from stable_baselines import TRPO
-    #     from stable_baselines.common.policies import MlpPolicy
-    #     if load_model_path:
-    #         logging.info(f"[Algo=trpo] Loading model from: {load_model_path}")
-    #         model = TRPO.load(load_model_path, env)
-    #         model.tensorboard_log = tensorboard_log
-    #     else:
-    #         logging.info("[Algo=trpo] Creating new TRPO model (MlpPolicy)")
-    #         model = TRPO(
-    #             MlpPolicy,
-    #             env,
-    #             verbose=1,
-    #             tensorboard_log=tensorboard_log,
-    #         )
-    #     return model
 
     else:
         raise ValueError(f"Unknown algorithm: {algo}. Supported: ppo")

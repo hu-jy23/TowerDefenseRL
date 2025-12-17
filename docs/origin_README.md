@@ -70,6 +70,7 @@ In the `logs/` directory, a log file containing training metrics (visible via Te
     ```
     Optionally, you can save the frames to a `best_frames` directory next to the actions file in the same `./models/date_time/`directory by adding the `--save-frames` argument (for future loading purposes):
     ```bash
+    # MUST EXECUTE
     python replay_actions.py --actions-file ./models/date_time/best_episode_actions.json --save-frames
     ```
 
@@ -77,7 +78,21 @@ In the `logs/` directory, a log file containing training metrics (visible via Te
     ```bash
     python replay_actions.py --load-dir ./models/date_time/best_frames
     ```
-    On Ubuntu systems, you might need to use:
+    On Ubuntu systems, you might need to first install `moviepy`:
     ```bash
+    # Tsinghua mirror for faster installation
+    pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+    
+    pip install moviepy --break-system-packages
+    ```
+    Then check `moviepy` version to ensure it's installed correctly:
+    ```bash
+    python -c "import moviepy; print(moviepy.__version__)"
+    ```
+
+    To create a video from the saved frames, use `make_video.py`:
+    ```bash
+    # MUST EXECUTE
     python make_video.py --load-dir ./models/date_time/best_frames
     ```
+    

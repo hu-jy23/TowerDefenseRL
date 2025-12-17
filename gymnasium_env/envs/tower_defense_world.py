@@ -296,16 +296,36 @@ class TowerDefenseWorldEnv(gym.Env):
             np.ndarray: 当前帧的 RGB 图像数组。维度为 (Height, Width, 3)。
                         如果渲染失败或模式不匹配，返回全黑图像。
         """
-        black_frame = np.zeros((self.game_info["map"]["height"], self.game_info["map"]["width"], 3), dtype=np.uint8)
+        # 定义标准宽和高
+        target_w = self.game_info["map"]["width"]
+        target_h = self.game_info["map"]["height"]
+        
+        # 创建标准尺寸的黑屏
+        black_frame = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+
         if self.render_mode == "rgb_array":
             response = requests.get(url + "render")
+            
+            # 如果服务器报错（比如游戏结束），返回标准黑屏
             if response.status_code != 200:
-                print(f"Error during render: {response.text}")
+                # print(f"Error during render: {response.text}") # 可以注释掉这行，避免刷屏
                 return black_frame
-            image_bytes = io.BytesIO(response.content)
-            image = Image.open(image_bytes)
-            rgb_array = np.array(image)
-            return rgb_array
+            
+            try:
+                image_bytes = io.BytesIO(response.content)
+                image = Image.open(image_bytes)
+                
+                # --- 关键修复：强制缩放到标准尺寸 ---
+                if image.size != (target_w, target_h):
+                    image = image.resize((target_w, target_h))
+                # --------------------------------
+                
+                rgb_array = np.array(image)
+                return rgb_array
+            except Exception as e:
+                print(f"Render processing error: {e}")
+                return black_frame
+                
         return black_frame
     
     # just to comply with the interface

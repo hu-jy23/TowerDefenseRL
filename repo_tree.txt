@@ -1,0 +1,72 @@
+.
+|-- README.md
+|-- config.default.json
+|-- custom-maps.json
+|-- custom_callbacks
+|   |-- __pycache__
+|   |   |-- save_agent_actions.cpython-312.pyc
+|   |   `-- tensor_board_info.cpython-312.pyc
+|   |-- save_agent_actions.py
+|   `-- tensor_board_info.py
+|-- docs
+|   |-- PARAMETER.md
+|   |-- PLAN.md
+|   |-- SETUP_GUIDE.md
+|   |-- env.md
+|   |-- tensorboard.md
+|   |-- train.md
+|   `-- wrappers.md
+|-- gymnasium_env
+|   |-- __init__.py
+|   |-- __pycache__
+|   |   `-- __init__.cpython-312.pyc
+|   |-- envs
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |   |-- __init__.cpython-312.pyc
+|   |   |   `-- tower_defense_world.cpython-312.pyc
+|   |   `-- tower_defense_world.py
+|   `-- wrappers
+|       |-- __init__.py
+|       |-- __pycache__
+|       |   |-- __init__.cpython-312.pyc
+|       |   |-- flatten_multidiscrete.cpython-312.pyc
+|       |   |-- random_map_wrapper.cpython-312.pyc
+|       |   `-- wrap.cpython-312.pyc
+|       |-- flatten_multidiscrete.py
+|       |-- random_map_wrapper.py
+|       `-- wrap.py
+|-- logs
+|   |-- DQN_2
+|   |   `-- events.out.tfevents.1764725873.p-bccd3ccce244-ackcs-00gjfowb.6818.0
+|   |-- DQN_3
+|   |   `-- events.out.tfevents.1764730712.p-bccd3ccce244-ackcs-00gjfowb.28232.0
+|   |-- PPO_1
+|   |-- PPO_10
+|   |   `-- events.out.tfevents.1764730705.p-bccd3ccce244-ackcs-00gjfowb.28051.0
+|   |-- PPO_1_0
+|   |-- PPO_2
+|   |-- PPO_3
+|   |-- PPO_4
+|   |-- PPO_5
+|   |-- PPO_6
+|   |-- PPO_7
+|   |   `-- events.out.tfevents.1764587103.p-bccd3ccce244-ackcs-00gjfowb.3841.0
+|   `-- PPO_9
+|       `-- events.out.tfevents.1764725808.p-bccd3ccce244-ackcs-00gjfowb.6270.0
+|-- models
+|   `-- 30.11.2025_13.46
+|       |-- best_episode_actions.json
+|       |-- checkpoints
+|       |   |-- ppo_tower_defense_1980_steps.zip
+|       |   |-- ppo_tower_defense_3960_steps.zip
+|       |   `-- ppo_tower_defense_5940_steps.zip
+|       `-- ppo_tower_defense.zip
+|-- replay_actions.py
+|-- repo_tree.txt
+|-- requirements.txt
+|-- test_env.py
+|-- train.py
+`-- training.log
+
+26 directories, 44 files

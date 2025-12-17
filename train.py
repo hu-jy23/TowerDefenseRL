@@ -81,8 +81,10 @@ def make_env(random_maps_path: str | None,
         env.reset(seed=seed_value)  # 只需要在最开始执行一次，之后不需要传入 seed，会用最开始 seed 产生的一系列序列
         env = RandomMapWrapper(env, map_list=data)
         
-    # env = wrap_env(env, episode_gap, run_prefix)  # 录像和监控 Wrapper，用来保存视频和每一局的监控数据
-
+    # ------ 录像和监控 Wrapper，用来保存视频和每一局的监控数据 ------ 
+    # ------ 不需要录像时可注释 ------ 
+    env = wrap_env(env, episode_gap, run_prefix)
+    
     return env
 
 
@@ -230,7 +232,7 @@ def main(load_model_path: str | None,
         model = make_model(
             algo=algo,
             env=env,
-            load_model_path=load_model_path,
+            load_model_path=load_model_path,  # 可选加载旧模型（比如17.12.2025_22.41/ppo_tower_defense.zip）继续训练
             tensorboard_log="./logs/",
         )
 
@@ -241,7 +243,8 @@ def main(load_model_path: str | None,
         model.learn(
             total_timesteps=training_steps,                                                    # 训练总步数
             callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],  # 回调函数列表，在训练过程中会被定期调用
-            reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数
+            reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数，not bool() 表示加载时训练步数会接着上次继续计数。
+            # tb_log_name="PPO_7"    # 替换为你需要继续的实验目录名
         )
 
         logging.info(
@@ -268,7 +271,9 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Train an RL agent on the Tower Defense environment (modular, algo-pluggable)."
     )
-    parser.add_argument("--load-model", help="Optional path to the model zip file.")
+    parser.add_argument("--load-model",  # 是否需要加载旧模型继续训练
+                        help="Optional path to the model zip file."
+    )
     parser.add_argument(
         "--random-maps",
         default=None,   # 默认不使用随机地图

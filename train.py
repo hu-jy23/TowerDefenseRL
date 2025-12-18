@@ -10,6 +10,7 @@ from stable_baselines3 import DQN
 from gymnasium_env.wrappers.random_map_wrapper import RandomMapWrapper
 from gymnasium_env.wrappers.wrap import wrap_env
 from gymnasium_env.wrappers.flatten_multidiscrete import FlattenMultiDiscreteAction
+from gymnasium_env.wrappers.hierarchical_wrapper import HierarchicalActionWrapper
 from custom_callbacks.tensor_board_info import TensorboardInfoCallback
 from custom_callbacks.save_agent_actions import SaveAgentActionsCallback
 import argparse
@@ -79,7 +80,7 @@ def make_env(random_maps_path: str | None,
         run_prefix = datetime.datetime.now().strftime("%d.%m.%Y_%H.%M")
 
     env = gym.make(env_name)
-    #env = wrap_env(env, episode_gap, run_prefix)
+    env = wrap_env(env, episode_gap, run_prefix)
 
     if random_maps_path:
         with open(random_maps_path, "r") as f:
@@ -136,7 +137,7 @@ def make_model(algo: str,
                 "MlpPolicy",
                 env,
                 learning_rate=3e-4,
-                buffer_size=100_000,
+                buffer_size=10_000,
                 batch_size=256,
                 train_freq=4,
                 target_update_interval=2_500,

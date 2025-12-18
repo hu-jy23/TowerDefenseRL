@@ -43,3 +43,5 @@ training.logs
 # --- 系统级忽略 ---
 # 如果你们用了 nohup 后台运行
 nohup.out
+
+tmp/

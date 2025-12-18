@@ -104,6 +104,12 @@ class TowerDefenseWorldEnv(gym.Env):
                 return black_frame
             image_bytes = io.BytesIO(response.content)
             image = Image.open(image_bytes)
+            
+            # Ensure image size matches metadata
+            expected_size = (self.game_info["map"]["width"], self.game_info["map"]["height"])
+            if image.size != expected_size:
+                image = image.resize(expected_size)
+                
             rgb_array = np.array(image)
             return rgb_array
         return black_frame

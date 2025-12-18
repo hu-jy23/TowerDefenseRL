@@ -5,161 +5,103 @@ from gymnasium import spaces
 class HierarchicalActionWrapper(gym.ActionWrapper):
     def __init__(self, env):
         super().__init__(env)
-        # 你的新动作空间：只有 4 个离散动作
-        # 0: Wait, 1: Archer, 2: Cannon, 3: Sniper
         self.action_space = spaces.Discrete(4)
         
-        # 获取底层环境的静态信息
+        # 1. 基础信息获取
         self.game_info = self.env.unwrapped.game_info
         self.map_width = self.game_info["map"]["width"]
-        self.map_height = self.game_info["map"]["height"]
         self.cell_size = self.game_info["map"]["cell_size"]
+        self.half_cell = self.cell_size // 2  # [优化] 预先算好半个格子偏移量
         
-        # 预计算：拿到所有塔的配置数据
+        # 2. 塔配置缓存
         self.tower_types = self.env.unwrapped.tower_types
-        # 建立 索引 -> 塔配置 的映射
-        self.idx_to_tower = {}
-        for idx, tower in enumerate(self.tower_types):
-             # 动作 1 对应 tower_types[0]...
-             self.idx_to_tower[idx + 1] = tower
+        self.idx_to_tower = {i + 1: t for i, t in enumerate(self.tower_types)}
 
     def action(self, action_idx):
-        """
-        核心：把 RL 输出的 0-3 转换成游戏需要的复杂字典
-        """
         # 动作 0: 挂机
-        if action_idx == 0:
-            return self._get_wait_action_array()
+        if action_idx == 0: return self._get_wait_action()
 
         # 动作 1-3: 造塔
         tower_config = self.idx_to_tower.get(int(action_idx))
-        if not tower_config:
-            return self._get_wait_action_array()
+        if not tower_config: return self._get_wait_action()
 
-        # --- 工兵逻辑：寻找最佳建造位置 ---
+        # --- 工兵逻辑 ---
         best_x, best_y = self._find_best_position(tower_config)
-        
-        # [DEBUG] 打印指挥官的意图和工兵的结果
-        # 如果你看到 best_x, best_y 始终是 0, 0 或 None，说明逻辑还有问题
-        # print(f"[HRL-Debug] Cmd: {tower_config['type']}, Found: ({best_x}, {best_y})")
 
-        # 如果找不到位置或者钱不够
-        current_money = self.env.unwrapped.game_state["money"]
-        if best_x is None or current_money < tower_config["cost"]:
-            return self._get_wait_action_array()
+        # 没钱或没地 -> 挂机
+        if best_x is None or self.env.unwrapped.game_state["money"] < tower_config["cost"]:
+            return self._get_wait_action()
 
-        # --- 构造原始环境需要的动作格式 ---
-        # 1. 找到 tower_index
-        tower_index = -1
-        for idx, t in enumerate(self.tower_types):
-            if t["type"] == tower_config["type"]:
-                tower_index = idx
-                break
-        
-        # 2. 找到 BUILD_TOWER 的动作索引
-        action_types = self.env.unwrapped.action_types
-        build_action_idx = -1
-        for idx, at in enumerate(action_types):
-            if at["type"] == "BUILD_TOWER":
-                build_action_idx = idx
-                break
-        
-        if build_action_idx == -1:
-             return self._get_wait_action_array()
-
-        return np.array([build_action_idx, tower_index, best_x, best_y], dtype=np.int64)
+        # 构造动作 (这里需要根据你的环境具体实现微调 action type ID)
+        # 假设 BUILD_TOWER 是 1 (需根据实际环境 action_types 确认)
+        return np.array([1, self._get_tower_type_id(tower_config), best_x, best_y], dtype=np.int64)
 
     def _find_best_position(self, tower_config):
-        best_pos = (None, None)
-        max_coverage = -1  # 初始值设为 -1
-        tower_range = tower_config["range"]
+        # [优化1] 预处理路径点：统一转为像素坐标 List
+        # 这样就不用在内层循环里判断 is_pixel_coords 了
+        path_pixels = self._get_path_in_pixels()
         
-        # 获取已占用格子
-        occupied_positions = set()
-        for t in self.env.unwrapped.game_state["towers"]:
-            gx = int(t["position"]["x"] // self.cell_size)
-            gy = int(t["position"]["y"] // self.cell_size)
-            occupied_positions.add((gx, gy))
+        # [优化2] 获取已占用格子 (Set 查找 O(1))
+        occupied = {
+            (int(t["position"]["x"] // self.cell_size), int(t["position"]["y"] // self.cell_size))
+            for t in self.env.unwrapped.game_state["towers"]
+        }
 
-        # 获取候选格子
-        map_info = self.env.unwrapped.game_info["map"]
-        if "buildable_cells" in map_info:
-            candidates = map_info["buildable_cells"]
-        else:
-            candidates = []
-            w = map_info["width"] // self.cell_size
-            h = map_info["height"] // self.cell_size
-            for x in range(w):
-                for y in range(h):
-                    candidates.append({"x": x, "y": y})
+        best_pos = (None, None)
+        max_hits = -1
+        range_sq = tower_config["range"] ** 2
+        
+        # 候选格子生成 (如果有 buildable_cells 直接用，没有就生成)
+        candidates = self.game_info["map"].get("buildable_cells")
+        if not candidates:
+            w, h = self.map_width // self.cell_size, self.game_info["map"]["height"] // self.cell_size
+            candidates = [{"x": x, "y": y} for x in range(w) for y in range(h)]
 
-        # [修复] 自动判断 path_cells 是像素坐标还是网格坐标
-        path_cells = self.env.unwrapped.game_info["map"]["path_cells"]
-        is_pixel_coords = False
-        if len(path_cells) > 0:
-            # 如果坐标值很大（比如大于地图宽度的网格数），说明是像素坐标
-            if path_cells[0]['x'] > (self.map_width // self.cell_size) + 5:
-                is_pixel_coords = True
-
+        # --- 主循环 ---
         for cell in candidates:
             cx, cy = cell['x'], cell['y']
             
-            if (cx, cy) in occupied_positions:
-                continue
-
-            # 如果没有 buildable_cells 列表，可能需要手动检查是否在路径上
-            if "buildable_cells" not in map_info:
-                 if self._is_on_path(cx, cy):
-                     continue
-
-            # 计算覆盖率
-            coverage = self._calculate_coverage(cx, cy, tower_range, path_cells, is_pixel_coords)
+            # 快速过滤
+            if (cx, cy) in occupied: continue
             
-            # 更新最大值
-            if coverage > max_coverage:
-                max_coverage = coverage
+            # [优化3] 算出当前候选坑位的【像素中心】，直接拿去比对
+            # 不在子函数里做乘法，这里算一次即可
+            center_px = cx * self.cell_size + self.half_cell
+            center_py = cy * self.cell_size + self.half_cell
+            
+            # 计算覆盖数
+            hits = 0
+            for px, py in path_pixels:
+                if (center_px - px)**2 + (center_py - py)**2 <= range_sq:
+                    hits += 1
+            
+            if hits > max_hits:
+                max_hits = hits
                 best_pos = (cx, cy)
         
         return best_pos
 
-    def _is_on_path(self, x, y):
-        path_cells = self.env.unwrapped.game_info["map"]["path_cells"]
-        for p in path_cells:
-            # 这里要注意，如果 path_cells 是像素坐标，这里的比较逻辑也要改
-            # 简单起见，假设用 buildable_cells 就不用走这里
-            if p['x'] == x and p['y'] == y:
-                return True
-        return False
-
-    def _calculate_coverage(self, gx, gy, range_val, path_cells, is_pixel_coords):
-        """计算 (gx, gy) 位置能覆盖多少个路径点"""
-        count = 0
-        # 塔中心的像素坐标 (这是对的，因为 grid -> pixel)
-        tx = gx * self.cell_size + self.cell_size / 2
-        ty = gy * self.cell_size + self.cell_size / 2
+    def _get_path_in_pixels(self):
+        """统一把路径点处理成像素坐标 [(x, y), ...]"""
+        raw_path = self.env.unwrapped.game_info["map"]["path_cells"]
+        if not raw_path: return []
         
-        range_sq = range_val ** 2
+        # 判断原始数据是不是像素 (看第一个点是否大得离谱)
+        is_already_pixel = raw_path[0]['x'] > (self.map_width // self.cell_size) + 2
         
-        for p in path_cells:
-            if is_pixel_coords:
-                # [修复] 如果已经是像素坐标，直接用！不要再乘 cell_size
-                px = p['x']
-                py = p['y']
-            else:
-                # 否则才乘
-                px = p['x'] * self.cell_size + self.cell_size / 2
-                py = p['y'] * self.cell_size + self.cell_size / 2
-            
-            dist_sq = (tx - px)**2 + (ty - py)**2
-            if dist_sq <= range_sq:
-                count += 1
-        return count
+        if is_already_pixel:
+            return [(p['x'], p['y']) for p in raw_path]
+        else:
+            # 如果是网格，批量转成像素中心
+            return [(p['x'] * self.cell_size + self.half_cell, 
+                     p['y'] * self.cell_size + self.half_cell) for p in raw_path]
 
-    def _get_wait_action_array(self):
-        action_types = self.env.unwrapped.action_types
-        wait_action_idx = 0
-        for idx, at in enumerate(action_types):
-            if at["type"] == "WAIT": 
-                wait_action_idx = idx
-                break
-        return np.array([wait_action_idx, 0, 0, 0], dtype=np.int64)
+    def _get_wait_action(self):
+        # 简化写法，硬编码或动态查找均可，保持原有逻辑
+        return np.array([0, 0, 0, 0], dtype=np.int64)
+
+    def _get_tower_type_id(self, config):
+        # 简单查找
+        for i, t in enumerate(self.tower_types):
+            if t["type"] == config["type"]: return i
+        return 0

@@ -342,3 +342,58 @@ Best Episode：这次新训练结束后，会生成一个新的 best_episode_act
 
 总结
 你只需要一行命令：python train.py --algo ppo --load-model <你的旧zip路径> 即可满血复活继续跑！
+
+python train.py --algo dqn_hierarchical --load-model models/dqn_hierarchical_1218_1712/dqn_hierarchical_tower_defense.zip
+
+
+
+
+
+
+
+从你提供的 TensorBoard 截图来看，你的训练已经走上了正轨。曲线呈现出非常积极的趋势，说明我们之前的 Bug 修复和参数调整起到了明显的作用。
+
+1. ep_len_mean 是什么意思？
+ep_len_mean (Episode Length Mean) 指的是平均每个回合（局）持续的步数。
+
+它的含义：在塔防游戏中，步数越多通常意味着存活时间越长。
+
+曲线分析：你的 ep_len_mean 从约 3470 步稳步上升到了超过 3515 步。
+
+结论：这是一个非常好的信号！配合 ep_rew_mean（平均奖励）同步上升的趋势，这说明 AI 正在学会如何通过造塔（目前主要是 Archer）来延长生存时间，而不是像最开始那样很快就输掉比赛。
+
+2. 训练图表的深度解读
+exploration_rate (左下)：你的探索率正在按照我们设置的 exploration_fraction=0.5 稳步下降。目前大约在 0.1 左右，这意味着 AI 还在保持 10% 的概率进行“尝试”，这有利于它继续发现新的策略。
+
+ep_rew_mean (右上)：奖励曲线在 100k 步之后有明显的抬头，说明 AI 已经成功把“造塔”和“拿到奖励”联系起来了。
+
+ep_wave_number_mean (左上)：平均波数在 14.7 到 15.0 之间震荡。这说明 AI 目前的“全 Archer 流”策略遇到了瓶颈，它能稳过前 14 波，但在 15 波左右会遇到无法处理的强力怪。
+
+3. 为什么只造 Archer？如何让它造 Cannon 和 Sniper？
+你发现 AI 只造 Archer，是因为在 DQN 的早期学习阶段，AI 具有**“短期贪婪”**的倾向。
+
+Archer 的优势：价格最便宜，只要攒一点点钱就能买到，且攻击频率快，AI 能迅速看到怪被打死后的奖励回馈。
+
+高级塔的困境：Cannon 和 Sniper 价格高，AI 需要在很多步内连续选择“Wait”动作才能攒够钱。在随机探索阶段，连续几十步都“刚好”不乱花钱去攒钱，概率非常低。
+
+解决方案：奖励引导 (Reward Shaping)
+为了让 AI 意识到高级塔的好处，你需要在 tower_defense_world.py 计算奖励的地方，给建造高级塔的行为加上“额外奖金”。
+
+你可以尝试这样修改奖励逻辑：
+
+成功建造 Archer：给予基础奖励（例如 +5）。
+
+成功建造 Cannon：给予更高奖励（例如 +20），奖励它学会了“攒钱”。
+
+成功建造 Sniper：给予巨额奖励（例如 +50），引导它尝试远程高伤害策略。
+
+4. 建议的下一步操作
+既然现在的曲线正在变好，你可以继续跑完这 500k 步。跑完后：
+
+观察 best_model.zip 的回放：看看后期怪是不是因为 Archer 伤害不足才冲破防线的。
+
+添加奖励权重：如果你希望它更多地使用高级塔，就在代码里给 Cannon 和 Sniper 的建造行为增加额外的 Reward。
+
+检查 Observation：确保 AI 的观察空间里包含“当前的钱”，否则它无法学会在钱够的时候去买高级塔。
+
+你想让我帮你写一段给不同塔增加额外奖励的 Python 代码示例吗？

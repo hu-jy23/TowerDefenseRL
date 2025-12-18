@@ -15,7 +15,7 @@ from custom_callbacks.tensor_board_info import TensorboardInfoCallback
 from custom_callbacks.save_agent_actions import SaveAgentActionsCallback
 import argparse
 import glob
-
+import torch
 
 #  ========= 配置加载  =========
 
@@ -113,7 +113,7 @@ def make_model(algo: str,
     if algo == "ppo":
         if load_model_path:
             logging.info(f"[Algo=ppo] Loading model from: {load_model_path}")
-            model = MaskablePPO.load(load_model_path, env, tensorboard_log=tensorboard_log)
+            model = MaskablePPO.load(load_model_path, env, tensorboard_log=tensorboard_log, device="cuda")
         else:
             logging.info("[Algo=ppo] Creating new MaskablePPO model (MlpPolicy)")
             model = MaskablePPO(
@@ -121,6 +121,7 @@ def make_model(algo: str,
                 env,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
+                device="cuda"
             )
         return model
 
@@ -134,7 +135,7 @@ def make_model(algo: str,
 
         if load_model_path:
             logging.info(f"[Algo=dqn_sb3] Loading model from: {load_model_path}")
-            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log)
+            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log, device="cuda")
         else:
             logging.info("[Algo=dqn_sb3] Creating new DQN model (MlpPolicy)")
             policy_kwargs = dict(net_arch=[1024, 1024])
@@ -153,6 +154,7 @@ def make_model(algo: str,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
                 policy_kwargs=policy_kwargs,
+                device="cuda"
             )
         return model
 
@@ -162,7 +164,9 @@ def make_model(algo: str,
         
         if load_model_path:
             logging.info(f"[Algo=dqn_hierarchical] Loading model from: {load_model_path}")
-            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log)
+            # model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log)
+            # 强制指定 device='cuda'
+            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log, device="cuda")
         else:
             logging.info("[Algo=dqn_hierarchical] Creating new DQN model (MlpPolicy)")
             policy_kwargs = dict(net_arch=[256, 256]) 
@@ -182,6 +186,7 @@ def make_model(algo: str,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
                 policy_kwargs=policy_kwargs,
+                device="cuda"
             )
         return model
         
@@ -288,6 +293,21 @@ def main(load_model_path: str | None,
             load_model_path=load_model_path,
             tensorboard_log="./logs/",
         )
+
+        # [新增] 打印当前模型正在使用的设备
+        try:
+            print(f"Checking model device...")
+            if hasattr(model, "device"):
+                print(f"Model is using device: {model.device}")
+                logging.info(f"Model is using device: {model.device}")
+                
+                if model.device.type == 'cuda':
+                    print(f"CUDA Device Name: {torch.cuda.get_device_name(0)}")
+                    print(f"CUDA Memory Allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+            else:
+                print("Model device attribute not found.")
+        except Exception as e:
+            print(f"Could not check device: {e}")
 
         logging.info("Starting model training...")
         start = datetime.datetime.now()

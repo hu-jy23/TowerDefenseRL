@@ -165,20 +165,26 @@ def make_model(algo: str,
             model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log)
         else:
             logging.info("[Algo=dqn_hierarchical] Creating new DQN model (MlpPolicy)")
-            policy_kwargs = dict(net_arch=[256, 256]) # 网络可以小一点，因为任务简单了
+            policy_kwargs = dict(net_arch=[256, 256]) 
             model = DQN(
-                "MlpPolicy", # 还是用 MLP，或者后面进阶用 CNN
+                "MlpPolicy",
                 env,
-                learning_rate=1e-3, # 任务简单，学习率可以稍微大点
+                learning_rate=1e-3, 
                 buffer_size=50000,
                 learning_starts=1000,
                 batch_size=128,
+                
+                # [新增修复] 强制增加探索时间
+                exploration_fraction=0.5,     # 在前 50% 的时间里保持探索衰减
+                exploration_initial_eps=1.0,  # 初始 100% 随机
+                exploration_final_eps=0.05,   # 最终保留 5% 随机
+                
                 verbose=1,
                 tensorboard_log=tensorboard_log,
                 policy_kwargs=policy_kwargs,
             )
         return model
-
+        
     # ==== 预留扩展位：DQN / TRPO 等（示例代码，可按需启用） ====
     # elif algo == "dqn":
     #     from stable_baselines3 import DQN

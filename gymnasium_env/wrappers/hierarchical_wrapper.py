@@ -9,7 +9,7 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         # 0: Wait, 1: Archer, 2: Cannon, 3: Sniper
         self.action_space = spaces.Discrete(4)
         
-        # 获取底层环境的静态信息（塔的属性、地图路径）
+        # 获取底层环境的静态信息
         self.game_info = self.env.unwrapped.game_info
         self.map_width = self.game_info["map"]["width"]
         self.map_height = self.game_info["map"]["height"]
@@ -17,46 +17,38 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         
         # 预计算：拿到所有塔的配置数据
         self.tower_types = self.env.unwrapped.tower_types
-        # 建立 索引 -> 塔名字 的映射 (例如 1 -> "archer")
-        # 注意：这里假设 tower_types 的顺序是固定的，通常是 [Archer, Cannon, Sniper]
-        # 最好根据 type 字段来建立映射更稳健，但这里先按索引
+        # 建立 索引 -> 塔配置 的映射
         self.idx_to_tower = {}
         for idx, tower in enumerate(self.tower_types):
-             # 动作 1 对应 tower_types[0], 动作 2 对应 tower_types[1]...
+             # 动作 1 对应 tower_types[0]...
              self.idx_to_tower[idx + 1] = tower
 
     def action(self, action_idx):
         """
-        这里是核心：把 RL 输出的 0-3 转换成游戏需要的复杂字典
+        核心：把 RL 输出的 0-3 转换成游戏需要的复杂字典
         """
-        # 动作 0: 挂机/攒钱
+        # 动作 0: 挂机
         if action_idx == 0:
-            return self._get_wait_action()
+            return self._get_wait_action_array()
 
         # 动作 1-3: 造塔
         tower_config = self.idx_to_tower.get(int(action_idx))
         if not tower_config:
-            return self._get_wait_action() # 异常保护
+            return self._get_wait_action_array()
 
         # --- 工兵逻辑：寻找最佳建造位置 ---
         best_x, best_y = self._find_best_position(tower_config)
+        
+        # [DEBUG] 打印指挥官的意图和工兵的结果
+        # 如果你看到 best_x, best_y 始终是 0, 0 或 None，说明逻辑还有问题
+        # print(f"[HRL-Debug] Cmd: {tower_config['type']}, Found: ({best_x}, {best_y})")
 
-        # 如果找不到位置（地图满了）或者钱不够，强制转为挂机
+        # 如果找不到位置或者钱不够
         current_money = self.env.unwrapped.game_state["money"]
         if best_x is None or current_money < tower_config["cost"]:
-            return self._get_wait_action()
+            return self._get_wait_action_array()
 
-        # 构造真实的动作字典发送给游戏
-        # 原始环境需要的动作格式是 MultiDiscrete([action_type, tower_type, x, y])
-        # 但这里我们直接返回字典是不行的，因为 gym.ActionWrapper 的 action() 方法
-        # 应该返回原始环境 action_space 能接受的格式。
-        # 
-        # 等等，TowerDefenseWorldEnv 的 step() 方法接收的是 np.ndarray (MultiDiscrete)。
-        # 但是 step() 内部第一件事就是解析这个 array。
-        # 
-        # 如果我们想让 Wrapper 能够工作，我们需要把这里的逻辑转换成
-        # 原始环境能接受的 [action_index, tower_index, x, y] 数组。
-        
+        # --- 构造原始环境需要的动作格式 ---
         # 1. 找到 tower_index
         tower_index = -1
         for idx, t in enumerate(self.tower_types):
@@ -64,12 +56,7 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                 tower_index = idx
                 break
         
-        # 2. 构造原始动作
-        # action_types[0] 通常是 "BUILD_TOWER" (需要确认 env 的定义)
-        # 假设 action_types 顺序是 ["BUILD_TOWER", "SELL_TOWER", "UPGRADE_TOWER", "WAIT"] (需要确认)
-        # 让我们去看看 env 的定义。
-        
-        # 为了安全起见，我们先读取 env 的 action_types
+        # 2. 找到 BUILD_TOWER 的动作索引
         action_types = self.env.unwrapped.action_types
         build_action_idx = -1
         for idx, at in enumerate(action_types):
@@ -83,30 +70,22 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         return np.array([build_action_idx, tower_index, best_x, best_y], dtype=np.int64)
 
     def _find_best_position(self, tower_config):
-        """
-        启发式逻辑：遍历所有格子，找到一个能覆盖最多路径点的位置
-        """
         best_pos = (None, None)
-        max_coverage = -1
+        max_coverage = -1  # 初始值设为 -1
         tower_range = tower_config["range"]
         
-        # 获取当前已经被占用的格子（避免重复造）
+        # 获取已占用格子
         occupied_positions = set()
         for t in self.env.unwrapped.game_state["towers"]:
-            # 把像素坐标转回网格坐标
             gx = int(t["position"]["x"] // self.cell_size)
             gy = int(t["position"]["y"] // self.cell_size)
             occupied_positions.add((gx, gy))
 
-        # 优化：直接从 buildable_cells 里读
-        # 注意：game_info["map"] 可能没有 "buildable_cells" 字段，取决于后端实现。
-        # 如果没有，我们需要遍历全图。为了稳健，我们先检查一下。
+        # 获取候选格子
         map_info = self.env.unwrapped.game_info["map"]
-        
         if "buildable_cells" in map_info:
             candidates = map_info["buildable_cells"]
         else:
-            # 如果后端没给，就生成所有格子
             candidates = []
             w = map_info["width"] // self.cell_size
             h = map_info["height"] // self.cell_size
@@ -114,25 +93,29 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                 for y in range(h):
                     candidates.append({"x": x, "y": y})
 
+        # [修复] 自动判断 path_cells 是像素坐标还是网格坐标
+        path_cells = self.env.unwrapped.game_info["map"]["path_cells"]
+        is_pixel_coords = False
+        if len(path_cells) > 0:
+            # 如果坐标值很大（比如大于地图宽度的网格数），说明是像素坐标
+            if path_cells[0]['x'] > (self.map_width // self.cell_size) + 5:
+                is_pixel_coords = True
+
         for cell in candidates:
             cx, cy = cell['x'], cell['y']
             
-            # 1. 检查是否已被占用
             if (cx, cy) in occupied_positions:
                 continue
-            
-            # 1.1 检查是否在路径上 (如果 buildable_cells 没过滤的话)
-            # 简单的做法是检查是否在 path_cells 里
-            # 但通常 buildable_cells 已经是过滤过的了。
-            # 如果是手动生成的 candidates，需要检查。
+
+            # 如果没有 buildable_cells 列表，可能需要手动检查是否在路径上
             if "buildable_cells" not in map_info:
                  if self._is_on_path(cx, cy):
                      continue
 
-            # 2. 计算覆盖率 (核心 Heuristic)
-            coverage = self._calculate_coverage(cx, cy, tower_range)
+            # 计算覆盖率
+            coverage = self._calculate_coverage(cx, cy, tower_range, path_cells, is_pixel_coords)
             
-            # 3. 更新最大值
+            # 更新最大值
             if coverage > max_coverage:
                 max_coverage = coverage
                 best_pos = (cx, cy)
@@ -142,41 +125,41 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
     def _is_on_path(self, x, y):
         path_cells = self.env.unwrapped.game_info["map"]["path_cells"]
         for p in path_cells:
+            # 这里要注意，如果 path_cells 是像素坐标，这里的比较逻辑也要改
+            # 简单起见，假设用 buildable_cells 就不用走这里
             if p['x'] == x and p['y'] == y:
                 return True
         return False
 
-    def _calculate_coverage(self, gx, gy, range_val):
+    def _calculate_coverage(self, gx, gy, range_val, path_cells, is_pixel_coords):
         """计算 (gx, gy) 位置能覆盖多少个路径点"""
         count = 0
-        # 塔的像素中心
+        # 塔中心的像素坐标 (这是对的，因为 grid -> pixel)
         tx = gx * self.cell_size + self.cell_size / 2
         ty = gy * self.cell_size + self.cell_size / 2
         
-        path_cells = self.env.unwrapped.game_info["map"]["path_cells"]
         range_sq = range_val ** 2
         
         for p in path_cells:
-            # 路径点的像素中心
-            px = p['x'] * self.cell_size + self.cell_size / 2
-            py = p['y'] * self.cell_size + self.cell_size / 2
+            if is_pixel_coords:
+                # [修复] 如果已经是像素坐标，直接用！不要再乘 cell_size
+                px = p['x']
+                py = p['y']
+            else:
+                # 否则才乘
+                px = p['x'] * self.cell_size + self.cell_size / 2
+                py = p['y'] * self.cell_size + self.cell_size / 2
             
             dist_sq = (tx - px)**2 + (ty - py)**2
             if dist_sq <= range_sq:
                 count += 1
         return count
 
-    def _get_wait_action(self):
-        # 这里的 wait action 也需要返回 array
-        return self._get_wait_action_array()
-
     def _get_wait_action_array(self):
-        # 找到 WAIT 动作的索引
         action_types = self.env.unwrapped.action_types
         wait_action_idx = 0
         for idx, at in enumerate(action_types):
-            if at["type"] == "WAIT": # 或者是 "SKIP", 取决于定义
+            if at["type"] == "WAIT": 
                 wait_action_idx = idx
                 break
-        # 后面的参数无所谓
         return np.array([wait_action_idx, 0, 0, 0], dtype=np.int64)

@@ -108,12 +108,25 @@ def make_model(algo: str,
     以后可以很方便地加：
       - dqn / trpo / sac 等
     """
+
+    # --- [关键修改：自动识别设备] ---
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available(): # 识别你的 Mac M 系列芯片
+        device = "mps"
+    else:
+        device = "cpu"
+    
+    logging.info(f"Using device: {device}")
+    print(f"Detected device: {device}")
+    # --------------------------------
+
     algo = algo.lower()
 
     if algo == "ppo":
         if load_model_path:
             logging.info(f"[Algo=ppo] Loading model from: {load_model_path}")
-            model = MaskablePPO.load(load_model_path, env, tensorboard_log=tensorboard_log, device="cuda")
+            model = MaskablePPO.load(load_model_path, env, tensorboard_log=tensorboard_log, device=device)
         else:
             logging.info("[Algo=ppo] Creating new MaskablePPO model (MlpPolicy)")
             model = MaskablePPO(
@@ -121,7 +134,7 @@ def make_model(algo: str,
                 env,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
-                device="cuda"
+                device=device
             )
         return model
 
@@ -135,7 +148,7 @@ def make_model(algo: str,
 
         if load_model_path:
             logging.info(f"[Algo=dqn_sb3] Loading model from: {load_model_path}")
-            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log, device="cuda")
+            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log, device=device)
         else:
             logging.info("[Algo=dqn_sb3] Creating new DQN model (MlpPolicy)")
             policy_kwargs = dict(net_arch=[1024, 1024])
@@ -154,7 +167,7 @@ def make_model(algo: str,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
                 policy_kwargs=policy_kwargs,
-                device="cuda"
+                device=device
             )
         return model
 
@@ -166,7 +179,7 @@ def make_model(algo: str,
             logging.info(f"[Algo=dqn_hierarchical] Loading model from: {load_model_path}")
             # model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log)
             # 强制指定 device='cuda'
-            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log, device="cuda")
+            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log, device=device)
         else:
             logging.info("[Algo=dqn_hierarchical] Creating new DQN model (MlpPolicy)")
             policy_kwargs = dict(net_arch=[256, 256]) 
@@ -186,7 +199,7 @@ def make_model(algo: str,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
                 policy_kwargs=policy_kwargs,
-                device="cuda"
+                device=device
             )
         return model
         

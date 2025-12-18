@@ -19,7 +19,9 @@
 步骤一：创建并启动 Tmux 会话
 
 Bash
+
 # 1. 创建一个新的 tmux 会话，命名为 'train_baseline'
+
 tmux new -s train_rl
 步骤二：启动游戏服务器（Pane 1）
 
@@ -27,9 +29,14 @@ tmux new -s train_rl
 
 Bash
 cd ~/shared-nvme/TowerDefenseGame
+
+cd ../TowerDefenseGame
 npm run start:api
+
 # 这一步完成后，屏幕会被服务器日志占据。
+
 # 不要关闭此 Pane！
+
 步骤三：启动 PPO 训练（Pane 2）
 
 现在你需要创建一个新的窗口分区（Pane 2），运行第一个训练任务。
@@ -41,7 +48,9 @@ npm run start:api
 Bash
 cd ~/shared-nvme/TowerDefenseRL
 python train.py --algo ppo
+
 # 这一步会开始运行 Maskable PPO
+
 步骤四：启动 DQN 训练（Pane 3）
 
 接下来创建第三个 Pane，运行 DQN 训练，确保使用不同的算法参数 --algo dqn_sb3。
@@ -53,7 +62,9 @@ python train.py --algo ppo
 Bash
 cd ~/shared-nvme/TowerDefenseRL
 python train.py --algo dqn_sb3
+
 # 这一步会开始运行 DQN
+
 注意：两个训练任务都会在 ./logs/ 目录下创建以不同时间戳和算法名（ppo/dqn）为前缀的日志文件，它们不会冲突。
 
 步骤五：后台挂起与检查
@@ -70,10 +81,6 @@ tmux attach -t train_baseline
 
 Bash
 tensorboard --logdir ./logs/ --port 6006
-
-
-
-
 
 这彻底证实了我们的推测：训练进程已经被系统强制杀死了 (Killed)。
 
@@ -92,8 +99,10 @@ tensorboard --logdir ./logs/ --port 6006
 将 buffer_size 从 100_000 改为 10_000。
 
 Python
+
 # 修改前 (train.py)
-            model = DQN(
+
+    model = DQN(
                 "MlpPolicy",
                 env,
                 learning_rate=3e-4,
@@ -103,7 +112,8 @@ Python
             )
 
 # 修改后 (建议)
-            model = DQN(
+
+    model = DQN(
                 "MlpPolicy",
                 env,
                 learning_rate=3e-4,
@@ -153,9 +163,6 @@ python train.py --algo dqn_sb3
 
 如果你看到它迅速飙升并变红（接近 100%），说明 buffer_size=10_000 还是太大（或者你的机器内存实在太小），那你需要进一步减小到 5000 甚至更低。
 
-
-
-
 如果 Tmux 窗口里的 Rollout 进度条已经停止更新（不再滚动新的 rollout/ep_rew_mean 等数据），但 training.log 文件里没有出现 Model training completed 的提示，通常只有两种情况：
 
 1. 训练进程被系统杀掉了 (最可能)
@@ -166,7 +173,9 @@ python train.py --algo dqn_sb3
 
 Bash
 dmesg | grep -i "kill"
+
 # 或者
+
 dmesg | grep -i "oom"
 如果你看到类似 Out of memory: Killed process 12345 (python) 的字样，那就是因为内存爆了。
 
@@ -183,7 +192,9 @@ dmesg | grep -i "oom"
 验证方法： 在终端运行：
 
 Bash
+
 # 查看名为 train.py 的进程是否存在
+
 ps aux | grep train.py
 如果没有任何输出（除了 grep 自己）：说明进程已经彻底挂了（验证了情况 1）。
 
@@ -218,11 +229,6 @@ KeyboardInterrupt (误触停止)
 如果进程还在但屏幕报错了 -> 看屏幕报错修 Bug。
 
 如果进程还在且屏幕没动静 -> 游戏服务器可能卡死了，检查 Node.js 的那个窗口。
-
-
-
-
-
 
 要想在手机上查看运行在云端服务器的 TensorBoard，你需要把服务器上的 6006 端口“暴露”到公网上，生成一个可以在手机浏览器访问的 URL。
 
@@ -260,12 +266,15 @@ ssh -p 443 -R0:localhost:6006 a.pinggy.io
 Bash
 
 # 下载 Linux 版本
+
 wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
 
 # 解压
+
 tar xvzf ngrok-v3-stable-linux-amd64.tgz
 
 # 移动到系统目录 (可选，或者直接用 ./ngrok)
+
 chmod +x ngrok
 注册并认证（第一次需要）：
 
@@ -288,12 +297,6 @@ Bash
 
 网络延迟：因为经过了公网中转，手机加载图表可能会比电脑慢一点，这是正常的。
 
-
-
-
-
-
-
 要在已经训练了 10 小时的基础上继续训练 (Resume Training)，你不需要修改代码，只需要利用 --load-model 参数和 最新的 Checkpoint 存档。
 
 以下是具体的操作步骤：
@@ -313,7 +316,7 @@ Bash
 JSON
 
 {
-    "hours_to_train": 5, 
+    "hours_to_train": 5,
     ...
 }
 第三步：运行加载命令
@@ -343,18 +346,12 @@ Best Episode：这次新训练结束后，会生成一个新的 best_episode_act
 总结
 你只需要一行命令：python train.py --algo ppo --load-model <你的旧zip路径> 即可满血复活继续跑！
 
-python train.py --algo dqn_hierarchical --load-model models/dqn_hierarchical_1218_1712/dqn_hierarchical_tower_defense.zip
-
-
-
-
-
-
+#### *python train.py --algo dqn_hierarchical --load-model models/dqn_hierarchical_1218_1712/dqn_hierarchical_tower_defense.zip*
 
 从你提供的 TensorBoard 截图来看，你的训练已经走上了正轨。曲线呈现出非常积极的趋势，说明我们之前的 Bug 修复和参数调整起到了明显的作用。
 
 1. ep_len_mean 是什么意思？
-ep_len_mean (Episode Length Mean) 指的是平均每个回合（局）持续的步数。
+   ep_len_mean (Episode Length Mean) 指的是平均每个回合（局）持续的步数。
 
 它的含义：在塔防游戏中，步数越多通常意味着存活时间越长。
 
@@ -363,14 +360,14 @@ ep_len_mean (Episode Length Mean) 指的是平均每个回合（局）持续的�
 结论：这是一个非常好的信号！配合 ep_rew_mean（平均奖励）同步上升的趋势，这说明 AI 正在学会如何通过造塔（目前主要是 Archer）来延长生存时间，而不是像最开始那样很快就输掉比赛。
 
 2. 训练图表的深度解读
-exploration_rate (左下)：你的探索率正在按照我们设置的 exploration_fraction=0.5 稳步下降。目前大约在 0.1 左右，这意味着 AI 还在保持 10% 的概率进行“尝试”，这有利于它继续发现新的策略。
+   exploration_rate (左下)：你的探索率正在按照我们设置的 exploration_fraction=0.5 稳步下降。目前大约在 0.1 左右，这意味着 AI 还在保持 10% 的概率进行“尝试”，这有利于它继续发现新的策略。
 
 ep_rew_mean (右上)：奖励曲线在 100k 步之后有明显的抬头，说明 AI 已经成功把“造塔”和“拿到奖励”联系起来了。
 
 ep_wave_number_mean (左上)：平均波数在 14.7 到 15.0 之间震荡。这说明 AI 目前的“全 Archer 流”策略遇到了瓶颈，它能稳过前 14 波，但在 15 波左右会遇到无法处理的强力怪。
 
 3. 为什么只造 Archer？如何让它造 Cannon 和 Sniper？
-你发现 AI 只造 Archer，是因为在 DQN 的早期学习阶段，AI 具有**“短期贪婪”**的倾向。
+   你发现 AI 只造 Archer，是因为在 DQN 的早期学习阶段，AI 具有**“短期贪婪”**的倾向。
 
 Archer 的优势：价格最便宜，只要攒一点点钱就能买到，且攻击频率快，AI 能迅速看到怪被打死后的奖励回馈。
 
@@ -388,7 +385,7 @@ Archer 的优势：价格最便宜，只要攒一点点钱就能买到，且攻�
 成功建造 Sniper：给予巨额奖励（例如 +50），引导它尝试远程高伤害策略。
 
 4. 建议的下一步操作
-既然现在的曲线正在变好，你可以继续跑完这 500k 步。跑完后：
+   既然现在的曲线正在变好，你可以继续跑完这 500k 步。跑完后：
 
 观察 best_model.zip 的回放：看看后期怪是不是因为 Archer 伤害不足才冲破防线的。
 

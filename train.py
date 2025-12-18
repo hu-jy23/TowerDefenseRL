@@ -14,6 +14,7 @@ from gymnasium_env.wrappers.hierarchical_wrapper import HierarchicalActionWrappe
 from custom_callbacks.tensor_board_info import TensorboardInfoCallback
 from custom_callbacks.save_agent_actions import SaveAgentActionsCallback
 import argparse
+import glob
 
 
 #  ========= 配置加载  =========
@@ -70,7 +71,8 @@ if episode_recording_gap < 1:
 def make_env(random_maps_path: str | None,
              seed_value: int = seed,
              episode_gap: int = int(episode_recording_gap),
-             run_prefix: str | None = None):
+             run_prefix: str | None = None,
+             use_hierarchical: bool = False):
     """
     创建并包装 Tower Defense 环境。
     - 负责 gym.make + wrap_env + RandomMapWrapper
@@ -88,6 +90,9 @@ def make_env(random_maps_path: str | None,
         # set seed for reproducibility (same seed -> same map sequence)
         env.reset(seed=seed_value)
         env = RandomMapWrapper(env, map_list=data)
+
+    if use_hierarchical:
+        env = HierarchicalActionWrapper(env)
 
     return env
 
@@ -151,6 +156,29 @@ def make_model(algo: str,
             )
         return model
 
+    elif algo == "dqn_hierarchical":
+        # 注意：这里不需要 FlattenMultiDiscreteAction 了！
+        # 因为 HierarchicalActionWrapper 出来的已经是 Discrete(4) 了
+        
+        if load_model_path:
+            logging.info(f"[Algo=dqn_hierarchical] Loading model from: {load_model_path}")
+            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log)
+        else:
+            logging.info("[Algo=dqn_hierarchical] Creating new DQN model (MlpPolicy)")
+            policy_kwargs = dict(net_arch=[256, 256]) # 网络可以小一点，因为任务简单了
+            model = DQN(
+                "MlpPolicy", # 还是用 MLP，或者后面进阶用 CNN
+                env,
+                learning_rate=1e-3, # 任务简单，学习率可以稍微大点
+                buffer_size=50000,
+                learning_starts=1000,
+                batch_size=128,
+                verbose=1,
+                tensorboard_log=tensorboard_log,
+                policy_kwargs=policy_kwargs,
+            )
+        return model
+
     # ==== 预留扩展位：DQN / TRPO 等（示例代码，可按需启用） ====
     # elif algo == "dqn":
     #     from stable_baselines3 import DQN
@@ -193,8 +221,24 @@ def make_model(algo: str,
 
 def main(load_model_path: str | None,
          random_maps_path: str | None,
-         algo: str):
-    run_prefix = datetime.datetime.now().strftime("%d.%m.%Y_%H.%M")
+         algo: str,
+         run_prefix: str | None):
+    
+    # 决定 TensorBoard 的日志名称 (logs/ 下的文件夹名)
+    # 如果用户没传 prefix，就用算法名 (SB3 会自动加 _1, _2) -> logs/ppo_1
+    # 如果用户传了 prefix，就用 prefix -> logs/MyRun_1
+    tb_log_name = run_prefix if run_prefix else algo
+
+    # 决定 Models 的文件夹名称 (models/ 下的文件夹名)
+    if run_prefix is None:
+        # 自动生成: algo_月日_时分 (例如 ppo_1218_1430)
+        timestamp = datetime.datetime.now().strftime("%m%d_%H%M")
+        model_run_prefix = f"{algo}_{timestamp}"
+    else:
+        model_run_prefix = run_prefix
+    
+    print(f"Models Directory: models/{model_run_prefix}")
+    print(f"TensorBoard Log Name: {tb_log_name} (will be in logs/{tb_log_name}_N)")
 
     logging.basicConfig(
         filename="training.log",
@@ -207,13 +251,14 @@ def main(load_model_path: str | None,
         random_maps_path=random_maps_path,
         seed_value=seed,
         episode_gap=int(episode_recording_gap),
-        run_prefix=run_prefix,
+        run_prefix=model_run_prefix,
+        use_hierarchical=(algo == "dqn_hierarchical")
     )
 
     # save 3 checkpoints
     checkpoint_callback = CheckpointCallback(
         save_freq=training_steps // 3,
-        save_path=f"./models/{run_prefix}/checkpoints/",
+        save_path=f"./models/{model_run_prefix}/checkpoints/",
         name_prefix=f"{algo}_tower_defense",
     )
     # custom tensorboard callback to log wave number and tower counts
@@ -248,6 +293,7 @@ def main(load_model_path: str | None,
             total_timesteps=training_steps,
             callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],
             reset_num_timesteps=reset_num_timesteps,
+            tb_log_name=tb_log_name,
         )
 
         logging.info(
@@ -256,12 +302,12 @@ def main(load_model_path: str | None,
         )
 
         # ---- 保存最终模型 ----
-        model.save(f"./models/{run_prefix}/{algo}_tower_defense.zip")
+        model.save(f"./models/{model_run_prefix}/{algo}_tower_defense.zip")
         logging.info("Model saved.")
 
         # ---- 保存最佳 episode 的动作序列 ----
         best_performance_data = save_actions_callback.get_best_agent_performance()
-        with open(f"./models/{run_prefix}/best_episode_actions.json", "w") as f:
+        with open(f"./models/{model_run_prefix}/best_episode_actions.json", "w") as f:
             json.dump(best_performance_data, f)
         logging.info("Best episode actions saved.")
     except Exception as e:
@@ -287,6 +333,11 @@ def parse_arguments():
             "ppo | dqn_sb3 (alias: dqn). For a future handmade DQN, use a separate entry."
         ),
     )
+    parser.add_argument(
+        "--run-prefix",
+        type=str,
+        help="Optional name for the run (used for logs and models folder). If not provided, a timestamped name will be generated.",
+    )
     return parser.parse_args()
 
 
@@ -296,4 +347,5 @@ if __name__ == "__main__":
         load_model_path=args.load_model,
         random_maps_path=args.random_maps,
         algo=args.algo,
+        run_prefix=args.run_prefix,
     )

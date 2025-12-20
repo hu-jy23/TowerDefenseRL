@@ -31,7 +31,12 @@ The tower defense game server must be running before executing any scripts.
 ### Train an agent
 1. Set ```hours_to_train``` in ```train.py```
 
-2. Execute script (default map):
+2. Execute the game server:
+    ```bash
+    (cd ../TowerDefenseGame && npm run start:api)
+    ```
+
+3. Execute script (default map):
     ```bash 
     python train.py
     ```
@@ -39,11 +44,11 @@ The tower defense game server must be running before executing any scripts.
     ```bash
     python train.py --random-maps custom-maps.json
     ```
-3. Monitor training progress via TensorBoard (or at the end of training):
+4. Monitor training progress via TensorBoard (or at the end of training) in `http://localhost:6006/`:
     ```bash
     tensorboard --logdir ./logs/
     ```
-4. The trained model will be saved in the `models/` directory.
+5. The trained model will be saved in the `models/` directory.
 
 In addition to the final model, a json file with the best agent performance (max waves reached) and a csv file with basic training metrics (reward, episode length and training time) will be saved.
 

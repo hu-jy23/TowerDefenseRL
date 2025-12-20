@@ -69,7 +69,13 @@ In the `logs/` directory, a log file containing training metrics (visible via Te
     ```
 
 ### Replay best agent game (works only for the default map for now)
-1. Execute the replay script specifying the json file with the best agent actions:
+1. Execute the game server:
+    ```bash
+    # MUST EXECUTE
+    (cd ../TowerDefenseGame && npm run start:api)
+    ```
+
+2. Execute the replay script specifying the json file with the best agent actions:
     ```bash
     python replay_actions.py --actions-file ./models/date_time/best_episode_actions.json
     ```
@@ -79,7 +85,7 @@ In the `logs/` directory, a log file containing training metrics (visible via Te
     python replay_actions.py --actions-file ./models/date_time/best_episode_actions.json --save-frames
     ```
 
-2. If you have already saved the frames, you can load them directly by using the `--load-frames` argument with the path to the `best_frames` directory (much faster):
+3. If you have already saved the frames, you can load them directly by using the `--load-frames` argument with the path to the `best_frames` directory (much faster):
     ```bash
     python replay_actions.py --load-dir ./models/date_time/best_frames
     ```

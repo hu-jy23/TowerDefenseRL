@@ -545,11 +545,11 @@ class TowerDefenseWorldEnv(gym.Env):
                     # 获取该塔的 AOE 半径（如果 API 没传则为 0）
                     blast_radius = tower_info.get("blast_radius", 0)
                     
-                    # 估算有效 DPS：如果是 AOE 塔，假设它能打 1.5 个怪 (1.5x 收益)
-                    # 这样 Cannon (DPS 15) 的估算值就是 15 * 1.5，性价比超过 Archer
+                    # 估算有效 DPS：如果是 AOE 塔，假设它能打 2.0 个怪 (2.0x 收益)
+                    # 这样 Cannon (DPS 15) 的估算值就是 15 * 2.0，性价比超过 Archer
                     effective_dps = tower_info["dps"]
                     if blast_radius > 0:
-                        effective_dps *= 1.5 
+                        effective_dps *= 2.0
                     
                     # 使用 effective_dps 计算奖励
                     reward += tower_info["cost"] * effective_dps * path_coverage / 100

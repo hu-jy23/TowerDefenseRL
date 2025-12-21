@@ -105,10 +105,18 @@ def make_model(algo: str,
         else:
             logging.info("[Algo=ppo] Creating new MaskablePPO model (MlpPolicy)")
             model = MaskablePPO(
-                "MlpPolicy",
+                "MultiInputPolicy",  # 这里必须改，不再是 MlpPolicy
                 env,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
+                learning_rate=3e-4,
+                gamma=0.99,
+                # 3. 自定义网络架构 (可选)
+                # feature_extractor 会自动用 CNN 处理 map_input，用 MLP 处理 global_input
+                # 下面的 net_arch 是处理完提取特征后，最后决策层的网络
+                policy_kwargs=dict(
+                    net_arch=[256, 256] 
+                )
             )
         return model
 

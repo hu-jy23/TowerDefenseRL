@@ -112,38 +112,6 @@ def make_model(algo: str,
             )
         return model
 
-    elif algo in ("dqn", "dqn_sb3"):
-        # Flatten MultiDiscrete([A,T,X,Y]) -> Discrete(A*T*X*Y)
-        try:
-            env = FlattenMultiDiscreteAction(env)
-        except Exception as e:
-            logging.error(f"Failed to wrap env with FlattenMultiDiscreteAction: {e}")
-            raise
-
-        if load_model_path:
-            logging.info(f"[Algo=dqn_sb3] Loading model from: {load_model_path}")
-            model = DQN.load(load_model_path, env, tensorboard_log=tensorboard_log)
-        else:
-            logging.info("[Algo=dqn_sb3] Creating new DQN model (MlpPolicy)")
-            policy_kwargs = dict(net_arch=[1024, 1024])
-            model = DQN(
-                "MlpPolicy",
-                env,
-                learning_rate=3e-4,
-                buffer_size=100_000,
-                batch_size=256,
-                train_freq=4,
-                target_update_interval=2_500,
-                learning_starts=10_000,
-                gamma=0.99,
-                exploration_fraction=0.2,
-                exploration_final_eps=0.05,
-                verbose=1,
-                tensorboard_log=tensorboard_log,
-                policy_kwargs=policy_kwargs,
-            )
-        return model
-
     else:
         raise ValueError(f"Unknown algorithm: {algo}. Supported: ppo")
 

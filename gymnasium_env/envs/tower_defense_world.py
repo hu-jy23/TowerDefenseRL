@@ -86,6 +86,7 @@ class TowerDefenseWorldEnv(gym.Env):
                     "dps": 10.0,            # dps (float): 每秒伤害 (10 伤害 / 1.0 秒间隔)
                     "cost": 20,             # cost (int): 造价
                     "unlock_wave": 0        # unlock_wave (int): 解锁波次，0 表示一开始就能造
+                    "blast_radius": 0       # blast_radius (int): 爆炸半径，0 表示无范围伤害
                 },
                 {
                     "type": "cannon",       # type (str): 塔的名称，炮塔
@@ -93,6 +94,7 @@ class TowerDefenseWorldEnv(gym.Env):
                     "dps": 20,            # dps (float): 每秒伤害 (40 伤害 / 2.0 秒间隔)
                     "cost": 30,
                     "unlock_wave": 4        # unlock_wave (int): 第 4 波才解锁
+                    "blast_radius": 60      # blast_radius (int): 爆炸半径为 60
                 },
                 {
                     "type": "sniper",       # type (str): 塔的名称，狙击塔
@@ -100,6 +102,7 @@ class TowerDefenseWorldEnv(gym.Env):
                     "dps": 40,            # dps (float): 每秒伤害 (80 伤害 / 2.0 秒间隔)
                     "cost": 45,
                     "unlock_wave": 7        # unlock_wave (int): 第 7 波才解锁
+                    "blast_radius": 0
                 }
             ]
         5. slower_tower_sample (dict): 最慢塔样本，用于归一化。它提供了游戏中攻击速度最慢的塔数据，作为归一化的分母。
@@ -132,6 +135,7 @@ class TowerDefenseWorldEnv(gym.Env):
         self.map_horizontal_cells = self.game_info["map"]["width"] // self.cell_size
         self.map_vertical_cells = self.game_info["map"]["height"] // self.cell_size
 
+        # ------ 定义动作空间为 MultiDiscrete ------
         self.action_space = spaces.MultiDiscrete([len(self.action_types), len(self.tower_types), self.map_horizontal_cells, self.map_vertical_cells]) # action, tower type, x, y
 
         self.path_cells_coordinates_normalized = self.__normalize_path_cells()
@@ -151,28 +155,32 @@ class TowerDefenseWorldEnv(gym.Env):
         self.global_feature_count = 5+len(self.path_cells_coordinates_normalized) # game time, wave number, money, lives, game over, path cells coordinates
         
         """
-        每个塔的特征 (5 + 3 = 8): 
+        每个塔的特征 (7 + 3 = 10): 
             - active: 表示这个“塔槽位”当前是有塔的（因为 RL 的输入是固定长度的数组，如果当前场上塔少于最大值，多余槽位的 active 就是 0）。
             - x, y: 网格坐标索引（归一化）
             - attack cooldown: 攻击冷却时间（归一化）
             - dps: 每秒伤害（归一化）
+            - blast_radius: 爆炸半径（归一化），表示 AOE 伤害范围，0 表示无范围伤害
+            - range: 攻击范围（归一化）
             - one-hot encoding type: 塔类型的独热编码，比如 [1,0,0] = archer, [0,1,0] = cannon, [0,0,1] = sniper
         """
-        self.features_per_tower = 5+len(self.tower_types) # active, x, y, attack cooldown, dps, one-hot encoding type
+        self.features_per_tower = 7+len(self.tower_types) # active, x, y, attack cooldown, dps, blast_radius, range, one-hot encoding type
         self.tower_feature_count = self.max_towers * self.features_per_tower
         
         """
-        每个敌人的特征 (5 + 3 = 8): 
+        每个敌人的特征 (6 + 3 = 9): 
             - active: 表示这个“敌人槽位”当前是有敌人的（因为 RL 的输入是固定长度的数组，如果当前场上敌人少于最大值，多余槽位的 active 就是 0）。
             - x, y: 网格坐标索引（归一化）
             - health: 当前血量（归一化）
             - path progress: 路径进度（归一化）
+            - currentSpeed: 当前移动速度（归一化）
             - one-hot encoding type: 敌人类型的独热编码，比如 [1,0,0] = tank, [0,1,0] = basic, [0,0,1] = fast
         """
-        self.features_per_enemy = 5+len(self.game_info["waves"]["enemy_types"]) # active, x, y, health, path progress, one-hot encoding type
+        self.features_per_enemy = 6+len(self.game_info["waves"]["enemy_types"]) # active, x, y, health, path progress, currentSpeed, one-hot encoding type
         self.enemy_feature_count = self.max_enemies * self.features_per_enemy
 
         total_features_count = self.global_feature_count + self.tower_feature_count + self.enemy_feature_count
+        # ------ 定义状态特征向量为一个归一化的扁平向量 ------
         self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
@@ -184,6 +192,9 @@ class TowerDefenseWorldEnv(gym.Env):
         self.enemy_type_to_index = {enemy_type: idx for idx, enemy_type in enumerate(self.game_info["waves"]["enemy_types"])}  # enemy_type_to_index: {'tank': 0, 'basic': 1, 'fast': 2}
         self.most_expensive_tower_cost = max(tower["cost"] for tower in self.tower_types)  # 从所有塔的配置中提取 cost 字段，找出最贵塔的造价。
         self.max_tower_dps = max(tower["dps"] for tower in self.tower_types)  # 从所有塔的配置中提取 dps 字段，找出最高 DPS。
+        self.max_blast_radius = max(tower.get("blast_radius", 0) for tower in self.tower_types)  # 从所有塔的配置中提取 blast_radius 字段，找出最大爆炸半径。
+        self.max_tower_range = max(tower["range"] for tower in self.tower_types)  # 从所有塔的配置中提取 range 字段，找出最大攻击范围。
+        self.max_enemy_speed = 250  # 敌人最大移动速度为 250 像素/秒，在游戏服务器代码里已经设置上限
 
     # reset the environment and return the initial observation and info
     def reset(self, seed=None, options=None) -> tuple[np.ndarray, dict]:
@@ -374,8 +385,8 @@ class TowerDefenseWorldEnv(gym.Env):
             np.ndarray: 归一化的观测向量。维度为 (total_features_count,)。
                 包含：
                 - 当前全局特征 (时间, 波数, 金钱, 当前玩家剩余生命, 游戏结束标志, 路径坐标序列)
-                - 当前塔特征列表 (每个塔: active (如果建造), x, y, cooldown, dps, type_one_hot)
-                - 当前敌人特征列表 (每个敌人 (如果存活): active, x, y, health, path_progress, type_one_hot)
+                - 当前塔特征列表 (每个塔: active (如果建造), x, y, cooldown, dps, blast_radius, range, type_one_hot)
+                - 当前敌人特征列表 (每个敌人 (如果存活): active, x, y, health, path_progress, currentSpeed, type_one_hot)
         
         Raises:
             ValueError: 如果观测空间形状未定义。
@@ -402,7 +413,9 @@ class TowerDefenseWorldEnv(gym.Env):
             observation[offset+2] = tower["position"]["y"] / self.game_info["map"]["height"] # normalized y
             observation[offset+3] = tower["attackCooldown"] / self.game_info["slower_tower_sample"]["attackCooldown"] # normalized attack cooldown
             observation[offset+4] = self.tower_types[self.tower_type_to_index[tower["type"]]]["dps"] / self.max_tower_dps # normalized dps
-            observation[offset+5+self.tower_type_to_index[tower["type"]]] = 1 # one-hot encoding type
+            observation[offset+5] = self.tower_types[self.tower_type_to_index[tower["type"]]].get("blast_radius", 0) / self.max_blast_radius # normalized blast_radius
+            observation[offset+6] = self.tower_types[self.tower_type_to_index[tower["type"]]]["range"] / self.max_tower_range # normalized range
+            observation[offset+7+self.tower_type_to_index[tower["type"]]] = 1 # one-hot encoding type
 
         # enemy features normalized
         for idx, enemy in enumerate(self.game_state["enemies"]):
@@ -412,7 +425,8 @@ class TowerDefenseWorldEnv(gym.Env):
             observation[offset+2] = enemy["position"]["y"] / self.game_info["map"]["height"] # normalized y
             observation[offset+3] = enemy["currentHealth"] / enemy["fullHealth"] # normalized health
             observation[offset+4] = enemy["pathProgress"]
-            observation[offset+5+self.enemy_type_to_index[enemy["type"]]] = 1 # one-hot encoding type
+            observation[offset+5] = enemy["currentSpeed"] / self.max_enemy_speed # normalized currentSpeed
+            observation[offset+6+self.enemy_type_to_index[enemy["type"]]] = 1 # one-hot encoding type
 
         return observation
 
@@ -553,7 +567,6 @@ class TowerDefenseWorldEnv(gym.Env):
                     
                     # 使用 effective_dps 计算奖励
                     reward += tower_info["cost"] * effective_dps * path_coverage / 100
-                    # === 修改结束 ===
 
         # - hoarding money uselessly
         if new_game_state["money"] > self.most_expensive_tower_cost:

@@ -89,16 +89,16 @@ class TowerDefenseWorldEnv(gym.Env):
                 },
                 {
                     "type": "cannon",       # type (str): 塔的名称，炮塔
-                    "range": 75,
-                    "dps": 37.5,            # dps (float): 每秒伤害 (75 伤害 / 2.0 秒间隔)
-                    "cost": 35,
+                    "range": 40,
+                    "dps": 20,            # dps (float): 每秒伤害 (40 伤害 / 2.0 秒间隔)
+                    "cost": 30,
                     "unlock_wave": 4        # unlock_wave (int): 第 4 波才解锁
                 },
                 {
                     "type": "sniper",       # type (str): 塔的名称，狙击塔
-                    "range": 175,
-                    "dps": 25.0,            # dps (float): 每秒伤害 (75 伤害 / 3.0 秒间隔)
-                    "cost": 50,
+                    "range": 250,
+                    "dps": 40,            # dps (float): 每秒伤害 (80 伤害 / 2.0 秒间隔)
+                    "cost": 45,
                     "unlock_wave": 7        # unlock_wave (int): 第 7 波才解锁
                 }
             ]
@@ -546,10 +546,10 @@ class TowerDefenseWorldEnv(gym.Env):
                     blast_radius = tower_info.get("blast_radius", 0)
                     
                     # 估算有效 DPS：如果是 AOE 塔，假设它能打 2.0 个怪 (2.0x 收益)
-                    # 这样 Cannon (DPS 15) 的估算值就是 15 * 2.0，性价比超过 Archer
+                    # 这样 Cannon (DPS 15) 的估算值就是 20 * 1.5，性价比超过 Archer
                     effective_dps = tower_info["dps"]
                     if blast_radius > 0:
-                        effective_dps *= 2.0
+                        effective_dps *= 1.5
                     
                     # 使用 effective_dps 计算奖励
                     reward += tower_info["cost"] * effective_dps * path_coverage / 100

@@ -10,11 +10,11 @@ url = "http://localhost:3000/"
 
 class TowerDefenseWorldEnv(gym.Env):
     """
-    塔防游戏环境类 (CNN Version - Final Fix)
-    修复内容:
-    1. 包含缺失的 __get_info 方法。
-    2. 包含 max_cooldown 的 API 兼容性修复。
-    3. 包含 max_enemy_speed 的硬编码修复 (250.0)。
+    塔防游戏环境类 (Outcome-based Reward Version)
+    
+    主要更新:
+    1. 奖励函数重构: 移除静态建塔奖励，改为基于每帧造成的实际伤害(Damage-based)奖励。
+    2. 解决 Agent 短视问题，鼓励根据战局攒钱造高输出塔。
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
     
@@ -30,16 +30,16 @@ class TowerDefenseWorldEnv(gym.Env):
             print(f"Server connection error: {e}")
             raise e
 
-        # --- 1. 基础参数解析 ---
+        # --- 1. 基础参数 ---
         self.action_types = self.game_info["actions"]
-        self.tower_types = self.game_info["towers"] # 包含 range, dps, cost, blast_radius, unlock_wave
+        self.tower_types = self.game_info["towers"]
         
         # 地图尺寸处理
         self.cell_size = self.game_info["map"]["cell_size"]
         self.map_width_px = self.game_info["map"]["width"]
         self.map_height_px = self.game_info["map"]["height"]
-        self.cols = self.map_width_px // self.cell_size # W (e.g. 18)
-        self.rows = self.map_height_px // self.cell_size # H (e.g. 12)
+        self.cols = self.map_width_px // self.cell_size
+        self.rows = self.map_height_px // self.cell_size
 
         # 动作空间: [ActionType, TowerType, X, Y]
         self.action_space = spaces.MultiDiscrete([
@@ -49,7 +49,7 @@ class TowerDefenseWorldEnv(gym.Env):
             self.rows
         ])
 
-        # --- 2. 动态计算归一化所需的极值 ---
+        # --- 2. 动态计算极值 ---
         self.max_time = self.game_info["max_global_info"]["gameTime"]
         self.max_wave = self.game_info["max_global_info"]["waveNumber"]
         self.max_money = self.game_info["max_global_info"]["money"]
@@ -58,15 +58,11 @@ class TowerDefenseWorldEnv(gym.Env):
         # 遍历所有塔类型，找到最大值
         self.max_tower_dps = max(t["dps"] for t in self.tower_types)
         self.max_tower_cost = max(t["cost"] for t in self.tower_types)
-        self.max_tower_range = max(t["range"] for t in self.tower_types)
-        self.max_cooldown = self.game_info.get("slower_tower_sample", {}).get("attackCooldown", 2.0)
-        
-        # [GameConfig 适配]: 硬编码速度上限为 250
+        self.max_cooldown = self.game_info.get("slower_tower_sample", {}).get("attackCooldown", 3.0)
         self.max_enemy_speed = 250.0 
         self.max_enemy_health = 1.0 
 
-        # --- 3. 构建 Observation Space (Dict) ---
-        # 9个通道设计
+        # --- 3. Observation Space ---
         self.n_channels = 9
         
         self.observation_space = spaces.Dict({
@@ -84,8 +80,7 @@ class TowerDefenseWorldEnv(gym.Env):
             )
         })
 
-        # --- 4. 预计算静态层 ---
-        # 缓存塔配置字典: type -> info
+        # --- 4. 静态层缓存 ---
         self.tower_specs = {t["type"]: t for t in self.tower_types}
         
         # 路径网格 (Channel 0)
@@ -94,6 +89,9 @@ class TowerDefenseWorldEnv(gym.Env):
             c, r = self._to_grid(cell["x"], cell["y"])
             if 0 <= r < self.rows and 0 <= c < self.cols:
                 self.path_grid[r, c] = 1.0
+
+        # 用于计算伤害增量
+        self.prev_total_health = 0.0
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -107,8 +105,12 @@ class TowerDefenseWorldEnv(gym.Env):
             self.game_state = self._get_empty_state()
 
         self.current_episode_actions = []
+        
+        # 初始化总血量追踪
+        self.prev_total_health = self._get_total_health(self.game_state["enemies"])
+        
         observation = self.__get_observation()
-        info = self.__get_info() # 这里调用了 __get_info
+        info = self.__get_info()
         return observation, info
 
     # perform the action and return the new observation, reward, terminated, truncated, info
@@ -134,7 +136,6 @@ class TowerDefenseWorldEnv(gym.Env):
         action_index, tower_index, x, y = action  # 解包动作输入
         game_action = self.action_types[action_index]
         if game_action["type"] == "BUILD_TOWER":
-            # 坐标转换：网格索引 -> 像素中心
             center_x = (x * self.cell_size) + (self.cell_size / 2)
             center_y = (y * self.cell_size) + (self.cell_size / 2)
             
@@ -146,16 +147,23 @@ class TowerDefenseWorldEnv(gym.Env):
 
         response = requests.post(url + "step", json=game_action)
         
-        # 错误处理 (非法动作)
+        # 非法错误情况: 建塔位置在路径上或已被占用，或玩家资金不足
         if response.status_code != 200:
             observation = self.__get_observation()
             info = self.__get_info()
             # 给予惩罚并保持状态
-            return observation, -1.0, False, False, info
+            return observation, -0.1, False, False, info
 
         new_game_state = response.json()
+        
+        # 计算奖励
         reward = self.__calculate_reward(new_game_state)
+        
+        # 更新状态
         self.game_state = new_game_state
+        
+        # 更新血量追踪，供下一帧使用
+        self.prev_total_health = self._get_total_health(new_game_state["enemies"])
         
         observation = self.__get_observation()
         
@@ -274,6 +282,10 @@ class TowerDefenseWorldEnv(gym.Env):
     def _to_grid(self, x_px, y_px):
         return int(x_px // self.cell_size), int(y_px // self.cell_size)
     
+    def _get_total_health(self, enemies_list):
+        """计算当前场上敌人总血量"""
+        return sum(e["currentHealth"] for e in enemies_list)
+    
     def __get_info(self, is_episode_over: bool = False) -> dict:
         """
         获取用于调试或日志记录的辅助信息。
@@ -293,86 +305,58 @@ class TowerDefenseWorldEnv(gym.Env):
 
         return info
 
-    def __calculate_reward(self, new_game_state: dict) -> int:
+    def __calculate_reward(self, new_game_state: dict) -> float:
         """
-        根据新旧游戏状态计算奖励值。
-
-        Args:
-            new_game_state (dict): 执行动作后的新游戏状态。
-
-        Returns:
-            int: 计算得出的奖励值 (整数)。
-                奖励机制包括：
-                + 击杀敌人
-                + 完成波次
-                + 有效建造防御塔 (基于覆盖路径格子数量和DPS)
-                - 无效建造 (未覆盖任何路径)
-                - 囤积过多资金 (鼓励消费)
-                - 损失生命值
-                - 游戏失败
+        基于伤害 (Damage-based) 的奖励函数
+            + 造成伤害 (Damage Reward)
+            + 击杀奖励 (Kill Reward)
+            - 漏怪惩罚 (Leak Penalty)
+            + 波次推进奖励 (Wave Progression Reward)
+            - 游戏结束惩罚 (Game Over Penalty)
         """
-        reward = 0
+        reward = 0.0
         old_state = self.game_state
         
-        # 1. 击杀奖励
+        # 1. 计算血量差值 (Damage Reward)
+        # 场上总血量减少 = 造成的伤害 + 敌人死亡 + 敌人漏掉
+        current_total_hp = self._get_total_health(new_game_state["enemies"])
+        hp_reduction = self.prev_total_health - current_total_hp
+        
+        # 如果新怪生成导致总血量增加(hp_reduction < 0)，我们不惩罚，记为0
+        # 只有血量减少才算有效输出
+        if hp_reduction > 0:
+            # 缩放系数: 假设一波怪总血量 1000，打完给 10 分
+            reward += hp_reduction * 0.01 
+
+        # 2. 击杀奖励 (Kill Reward)
+        # 鼓励完成最后一击
         kill_count = max(0, len(old_state["enemies"]) - len(new_game_state["enemies"]))
-        reward += kill_count * 1.5 
+        if kill_count > 0:
+            reward += kill_count * 1.0
 
-        # 2. 波次进度
-        if new_game_state["waveNumber"] > old_state["waveNumber"]:
-            reward += new_game_state["waveNumber"] * 5 
-
-        # 3. 建塔奖励
-        new_towers_count = len(new_game_state["towers"]) - len(old_state["towers"])
-        if new_towers_count > 0:
-            tower = new_game_state["towers"][-1]
-            t_type = tower["type"]
-            tower_spec = self.tower_specs.get(t_type, {})
-            
-            cost = tower_spec.get("cost", 10)
-            dps = tower_spec.get("dps", 1)
-            blast_radius = tower_spec.get("blast_radius", 0)
-            
-            path_cells_covered = self.__count_path_cells_in_range(tower, tower_spec.get("range", 0))
-            
-            if path_cells_covered == 0:
-                reward -= 50
-            else:
-                effective_dps = dps
-                if blast_radius > 0:
-                    effective_dps *= 1.5 
-                
-                placement_score = (cost * effective_dps * path_cells_covered) / 1000.0
-                reward += placement_score
-
-        # 4. 惩罚与限制
-        if new_game_state["money"] > self.max_tower_cost:
-             reward -= (new_game_state["money"] - self.max_tower_cost)
-
+        # 3. 漏怪惩罚 (Leak Penalty)
+        # 必须重罚！
+        # 注意: 当怪漏掉时，它的血量会从 current_total_hp 中消失，导致 hp_reduction 变大，
+        # 从而错误的给了一个正奖励。所以这里的负惩罚必须足够大，覆盖掉那个误判的正奖励。
         lives_lost = old_state["lives"] - new_game_state["lives"]
         if lives_lost > 0:
-            reward -= lives_lost * 50
+            # 假设漏掉一个满血 Tank (150血)，Damage Reward 会误加 1.5分
+            # 所以惩罚至少要是 -20，确保 Agent 知道这是亏的
+            reward -= lives_lost * 20.0
 
+        # 4. 辅助奖励: 波次推进
+        if new_game_state["waveNumber"] > old_state["waveNumber"]:
+            reward += 5.0
+
+        # 5. 游戏结束惩罚
         if new_game_state["gameOver"]:
-            reward -= 500
-
-        return round(reward, 2)
-
-    def __count_path_cells_in_range(self, tower: dict, t_range: float) -> int:
-        count = 0
-        tx, ty = tower["position"]["x"], tower["position"]["y"]
-        r_sq = t_range**2
-
-        min_x, max_x = tx - t_range, tx + t_range
-        min_y, max_y = ty - t_range, ty + t_range
-
-        for cell in self.game_info["map"]["path_cells"]:
-            cx, cy = cell["x"], cell["y"]
-            if min_x < cx < max_x and min_y < cy < max_y:
-                dist_sq = (tx - cx)**2 + (ty - cy)**2
-                if dist_sq <= r_sq:
-                    count += 1
-        return count
+            reward -= 100.0
+            
+        # 6. (可选) 微小的闲置/囤钱惩罚
+        # 为了防止 Agent 在开局完全不造塔导致直接漏怪，
+        # 如果钱很多但场上塔很少，可以给一点微小压力，但伤害奖励通常足够驱动它造塔。
+        
+        return float(reward)
 
     def action_masks(self) -> np.ndarray:
         action_mask = np.ones(len(self.action_types), dtype=bool)

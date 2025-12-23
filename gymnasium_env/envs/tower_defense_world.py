@@ -97,30 +97,50 @@ class TowerDefenseWorldEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         
-        # === 课程学习调度器 (Curriculum Scheduler) ===
-        # 30% 正常开局: 验证全流程能力
-        # 40% Sniper特训 (Wave 12, Money 400): 强迫面对高甲怪，钱管够
-        # 30% Cannon特训 (Wave 6, Money 200): 强迫面对密集怪群
-        
+        # === [升级版] 模拟专家课程 (Simulated Expert Curriculum) ===
         rand_val = np.random.random()
         reset_payload = {}
 
-        if rand_val < 0: 
-            # [特训模式 A: 绝境求生] -> 针对 Tank/Sniper
-            # 直接跳到 Archer 流的崩溃边缘 (Wave 12)
-            # 第 12 波开始前，此时手上有 252 金币
-            reset_payload = {"start_wave": 12, "start_money": 252}
-            # print(f"[Curriculum] Hard Mode: Wave 12, Money 252")
+        # 坐标配置 (与前端 game.ts 保持严格一致)
+        # 注意: 如果 Python 端和 TypeScript 端地图坐标系一致，直接用像素坐标
+        scenario_1_towers = [
+            {"type": "cannon", "x": 275, "y": 425}, # 核心拐角
+            {"type": "cannon", "x": 325, "y": 425}, # 核心拐角
+            {"type": "archer", "x": 725, "y": 175}, # 终点防守
+            {"type": "archer", "x": 725, "y": 225}  # 终点防守
+        ]
+        
+        scenario_2_towers = [
+            {"type": "archer", "x": 725, "y": 175},
+            {"type": "archer", "x": 725, "y": 225}
+        ]
+
+        if rand_val < 0.4: 
+            # [模式 A: 专家残局 - 学习造 Sniper] (40% 概率)
+            # 场景: Wave 9, 62块, 已有火力基础
+            # 目标: 配合 Mask, Agent 只能买 Sniper, 体验后期高回报
+            reset_payload = {
+                "start_wave": 9,
+                "start_money": 62,
+                "prebuilt_towers": scenario_1_towers
+            }
+            # print(f"[Curriculum] Scenario 1: Expert Late Game")
             
-        elif rand_val < 0:
-            # [特训模式 B: 密集防守] -> 针对 Fast/Cannon
-            # 跳到怪群开始密集的阶段
-            # 第 6 波开始前，此时手上有 98 金币
-            reset_payload = {"start_wave": 6, "start_money": 98}
-            # print(f"[Curriculum] Swarm Mode: Wave 6, Money 98")
+        elif rand_val < 0.7:
+            # [模式 B: 过渡残局 - 学习造 Cannon] (30% 概率)
+            # 场景: Wave 6, 40块, 只有基础弓
+            # 目标: 配合 Mask, Agent 必须买 Cannon 才能守住怪群
+            reset_payload = {
+                "start_wave": 6,
+                "start_money": 40,
+                "prebuilt_towers": scenario_2_towers
+            }
+            # print(f"[Curriculum] Scenario 2: Mid Game Transition")
             
         else:
-            # [正常模式]
+            # [模式 C: 正常开局 - 综合大考] (30% 概率)
+            # 场景: Wave 0, 40块, 空地
+            # 目标: 检验是否学会了前期的克制和后期的爆发
             reset_payload = {}
             # print(f"[Curriculum] Normal Start")
 
@@ -388,11 +408,11 @@ class TowerDefenseWorldEnv(gym.Env):
         return float(reward)
 
     def action_masks(self) -> np.ndarray:
-        # [修改] 加入基于规则的 Masking，防止后期乱花钱
+        # [升级版] 消费升级锁 (Consumption Lock)
         
         action_mask = np.ones(len(self.action_types), dtype=bool)
         
-        # 1. 钱不够基础 Mask
+        # 1. 基础规则: 钱不够 Mask
         min_cost = min(t["cost"] for t in self.tower_types)
         if self.game_state["money"] < min_cost:
             for idx, act in enumerate(self.action_types):
@@ -402,19 +422,34 @@ class TowerDefenseWorldEnv(gym.Env):
 
         tower_mask = np.ones(len(self.tower_types), dtype=bool)
         
-        # [新规则]：如果钱很多 (>200) 且到了后期 (>Wave 10)，强制禁止买 Archer
-        # 强迫 Agent 只能买 Cannon/Sniper
-        force_high_tech = (self.game_state["money"] > 200 and self.game_state["waveNumber"] > 10)
+        # 获取当前状态
+        money = self.game_state["money"]
+        wave = self.game_state["waveNumber"]
+        towers_count = len(self.game_state["towers"])
+        
+        # 获取塔的元数据
+        sniper_cost = next((t["cost"] for t in self.tower_types if t["type"] == "sniper"), 50)
+        cannon_cost = next((t["cost"] for t in self.tower_types if t["type"] == "cannon"), 30)
         
         for idx, t in enumerate(self.tower_types):
-            # 基础规则: 钱不够或没解锁
-            if (self.game_state["money"] < t["cost"] or 
-                self.game_state["waveNumber"] < t.get("unlock_wave", 0)):
+            # 2. 基础规则: 钱不够或没解锁 -> False
+            if (money < t["cost"] or wave < t.get("unlock_wave", 0)):
+                tower_mask[idx] = False
+                continue
+            
+            # === [核心] 消费升级逻辑 ===
+            
+            # 规则 A: 富人强制消费 (针对 Scenario 1)
+            # 只要买得起 Sniper (45块), 严禁买 Archer (20块)
+            # 逻辑: "有钱必须花在刀刃上"
+            if money >= sniper_cost and t["type"] == "archer":
                 tower_mask[idx] = False
             
-            # 进阶规则: 强制消费升级
-            if force_high_tech and t["type"] == "archer":
-                tower_mask[idx] = False # 禁止买 Archer
+            # 规则 B: 中产阶级陷阱 (针对 Scenario 2)
+            # 如果是中期 (Wave 4-8), 且已经有两个 Archer 了
+            # 禁止继续买 Archer, 逼迫买 Cannon 或存钱买 Sniper
+            if 4 <= wave <= 8 and towers_count >= 2 and t["type"] == "archer":
+                tower_mask[idx] = False
 
         x_mask = np.ones(self.cols, dtype=bool)
         y_mask = np.ones(self.rows, dtype=bool)

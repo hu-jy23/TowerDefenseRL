@@ -72,14 +72,22 @@ Tower Defense Game API 提供了一系列 RESTful 接口，用于获取游戏信
     - `pathProgress`: number - 路径进度（0-1）
 
 ### 2. POST /reset
-**描述**: 重置游戏状态到初始状态。
+**描述**: 重置游戏状态到初始状态，支持可选的自定义起始波次、金钱和预设塔（用于课程学习）。
+
+**请求体**: JSON 对象（可选）
+- `start_wave`: number（可选） - 起始波次，默认为 0
+- `start_money`: number（可选） - 起始金钱，默认为初始配置值
+- `prebuilt_towers`: Array（可选） - 预设塔列表，每个元素为对象
+  - `type`: TowerType - 塔类型（如 'archer', 'cannon', 'sniper'）
+  - `x`: number - 塔的X坐标
+  - `y`: number - 塔的Y坐标
 
 **返回类型**: JSON 对象 (GameState)
 
 **字段说明**:
 - `gameTime`: number - 游戏时间（秒），重置后为 0
-- `waveNumber`: number - 当前波数，重置后为 0
-- `money`: number - 当前金币数量，重置后为初始值
+- `waveNumber`: number - 当前波数，重置后为 `start_wave`（默认为 0）
+- `money`: number - 当前金币数量，重置后为 `start_money`（默认为初始值）
 - `lives`: number - 当前生命值，重置后为初始值
 - `gameOver`: boolean - 游戏是否结束，重置后为 false
 - `enemies`: Enemy[] - 当前地图上的敌人列表
@@ -95,7 +103,7 @@ Tower Defense Game API 提供了一系列 RESTful 接口，用于获取游戏信
     - `dy`: number - Y方向分量（-1, 0, 1）
   - `currentWaypointIndex`: number - 当前目标路径点的索引
   - `pathProgress`: number - 在当前路径段上的进度（0-1）
-- `towers`: Tower[] - 当前地图上的塔列表
+- `towers`: Tower[] - 当前地图上的塔列表（如果提供了 `prebuilt_towers`，则包含这些塔）
   - `type`: TowerType - 塔类型（如 'archer', 'cannon', 'sniper'）
   - `position`: Position - 塔的位置
     - `x`: number - X坐标
@@ -111,11 +119,31 @@ Tower Defense Game API 提供了一系列 RESTful 接口，用于获取游戏信
 
 **字段说明**: 同 POST /reset，返回当前游戏状态的快照。
 
-### 4. 其他接口
+### 4. GET /
+**描述**: 返回API服务的欢迎信息。
 
-- **GET /**: 返回字符串 "Tower Defense Game API"
-- **POST /set-map**: 设置新的地图路径点，返回路径点数组
-- **GET /render**: 返回游戏画面的 PNG 图像缓冲区（仅在游戏未结束时可用）
+**返回类型**: 字符串
+
+**字段说明**: 返回字符串 "Tower Defense Game API"
+
+### 5. POST /set-map
+**描述**: 设置新的地图路径点，更新游戏地图。
+
+**请求体**: JSON 数组 (Position[])
+- 每个元素为 Position 对象：
+  - `x`: number - 路径点的 X 坐标
+  - `y`: number - 路径点的 Y 坐标
+
+**返回类型**: JSON 数组 (Position[])
+
+**字段说明**: 返回设置的路径点数组，与请求体相同。
+
+### 6. GET /render
+**描述**: 渲染当前游戏状态为PNG图像，仅在游戏未结束时可用。
+
+**返回类型**: PNG 图像缓冲区（二进制数据）
+
+**字段说明**: 返回游戏画面的PNG格式图像。如果游戏已结束，返回400错误和消息 "Game is over, cannot render."
 
 ## 数据类型说明
 

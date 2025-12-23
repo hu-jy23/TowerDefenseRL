@@ -8,11 +8,6 @@ import json
 import argparse
 import os
 
-SERVER_URL = "http://localhost:3000"
-SET_MAP_ENDPOINT = f"{SERVER_URL}/set-map"
-RESET_ENDPOINT = f"{SERVER_URL}/reset"
-STEP_ENDPOINT = f"{SERVER_URL}/step"
-RENDER_ENDPOINT = f"{SERVER_URL}/render"
 PLAYBACK_SPEED_MS = 10  # delay between frames in milliseconds
 DEFAULT_MAP_WAYPOINTS = [
     { "x": 75, "y": 25 },
@@ -29,10 +24,16 @@ DEFAULT_MAP_WAYPOINTS = [
     { "x": 725, "y": 575 }
 ]
 
-def main(actions_file, save_frames, load_dir):
+def main(actions_file, save_frames, load_dir, port):
     """
     Replays a game by either collecting frames from a server or loading them from a directory.
     """
+    SERVER_URL = f"http://localhost:{port}"
+    SET_MAP_ENDPOINT = f"{SERVER_URL}/set-map"
+    RESET_ENDPOINT = f"{SERVER_URL}/reset"
+    STEP_ENDPOINT = f"{SERVER_URL}/step"
+    RENDER_ENDPOINT = f"{SERVER_URL}/render"
+    
     frames = []
     target_wave = 0
 
@@ -165,12 +166,13 @@ def parse_arguments():
     parser.add_argument("--actions-file", help="Path to the JSON actions file.")
     parser.add_argument("--save-frames", action="store_true", help="Optional. Save frames to a 'best_frames' directory next to the actions file.")
     parser.add_argument("--load-dir", help="Optional. Directory to load frames.")
+    parser.add_argument("--port", type=int, default=3000, help="Port of the game server to connect to (default: 3000).")
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_arguments()
     try:
-        main(args.actions_file, args.save_frames, args.load_dir)
+        main(args.actions_file, args.save_frames, args.load_dir, args.port)
     finally:
         try:
             cv2.destroyAllWindows()

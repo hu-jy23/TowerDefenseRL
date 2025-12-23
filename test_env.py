@@ -1,13 +1,21 @@
 import gymnasium as gym
 import gymnasium_env.envs  # 注册自定义环境
 import time
+import argparse
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Test the Tower Defense RL environment connection.")
+    parser.add_argument("--port", type=int, default=3000, help="Port of the game server to connect to (default: 3000).")
+    return parser.parse_args()
+
+args = parse_arguments()
 
 # 这里的 ID 对应 tower_defense_world.py 中注册的 ID
 ENV_ID = "gymnasium_env/TowerDefenseWorld-v0"
 
 try:
-    print(f"1. 尝试创建环境: {ENV_ID}")
-    env = gym.make(ENV_ID)
+    print(f"1. 尝试创建环境: {ENV_ID} on port {args.port}")
+    env = gym.make(ENV_ID, port=args.port)
     
     print("2. 尝试重置环境 (发送 /reset 请求)...")
     obs, info = env.reset()

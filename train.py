@@ -67,7 +67,8 @@ if episode_recording_gap < 1:
 def make_env(random_maps_path: str | None,
              seed_value: int = seed,
              episode_gap: int = int(episode_recording_gap),
-             run_prefix: str | None = None):
+             run_prefix: str | None = None,
+             port: int = 3000):  # 新增 port 参数
     """
     创建并返回环境。
     """
@@ -75,15 +76,15 @@ def make_env(random_maps_path: str | None,
         run_prefix = datetime.datetime.now().strftime("%d.%m.%Y_%H.%M")
   
     # 创建环境实例 TowerDefenseWorldEnv
-    env = gym.make(env_name)
-
+    env = gym.make(env_name, port=port)  # 新增 port 参数传递
+  
     # 如果传了 random_maps_path，RandomMapWrapper 会让 reset() 时随机换一张新图，然后再重置游戏。
     if random_maps_path:
         with open(random_maps_path, "r") as f:
             data = json.load(f)
         env.reset(seed=seed_value)  # 只需要在最开始执行一次，之后不需要传入 seed，会用最开始 seed 产生的一系列序列
         env = RandomMapWrapper(env, map_list=data)
-        
+      
     # ------ 录像和监控 Wrapper，用来保存视频和每一局的监控数据 ------ 
     # ------ 不需要录像时可注释 ------ 
     # env = wrap_env(env, episode_gap, run_prefix)
@@ -130,7 +131,8 @@ def make_model(algo: str,
 
 def main(load_model_path: str | None,
          random_maps_path: str | None,
-         algo: str):
+         algo: str,
+         port: int = 3000):  # 新增 port 参数
     """
     主训练函数。
     """
@@ -149,6 +151,7 @@ def main(load_model_path: str | None,
         seed_value=seed,
         episode_gap=int(episode_recording_gap),
         run_prefix=run_prefix,
+        port=port  # 新增 port 参数传递
     )
 
     # 三个回调函数
@@ -236,6 +239,12 @@ def parse_arguments():
             "ppo | dqn_sb3 (alias: dqn). For a future handmade DQN, use a separate entry."
         ),
     )
+    parser.add_argument(  # 新增 --port 参数
+        "--port",
+        type=int,
+        default=3000,
+        help="Port of the game server to connect to (default: 3000).",
+    )
     return parser.parse_args()
 
 
@@ -245,4 +254,5 @@ if __name__ == "__main__":
         load_model_path=args.load_model,
         random_maps_path=args.random_maps,
         algo=args.algo,
+        port=args.port,  # 新增 port 参数传递
     )

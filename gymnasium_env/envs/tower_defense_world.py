@@ -6,8 +6,6 @@ from PIL import Image
 import numpy as np
 from gymnasium import spaces
 
-url = "http://localhost:3000/"
-
 class TowerDefenseWorldEnv(gym.Env):
     """
     塔防游戏环境类 (Curriculum Learning Version)
@@ -19,11 +17,12 @@ class TowerDefenseWorldEnv(gym.Env):
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
     
-    def __init__(self, render_mode="rgb_array"):
+    def __init__(self, render_mode="rgb_array", port=3000):
         self.render_mode = render_mode
+        self.url = f"http://localhost:{port}/"
         try:
             # 获取游戏初始化信息
-            response = requests.get(url + "info")
+            response = requests.get(self.url + "info")
             if response.status_code != 200:
                 raise ConnectionError(f"Failed to get game info: {response.text}")
             self.game_info = response.json()
@@ -145,7 +144,7 @@ class TowerDefenseWorldEnv(gym.Env):
             # print(f"[Curriculum] Normal Start")
 
         try:
-            response = requests.post(url + "reset", json=reset_payload)
+            response = requests.post(self.url + "reset", json=reset_payload)
             if response.status_code != 200:
                 raise ConnectionError(f"Failed to reset game: {response.text}")
             self.game_state = response.json()
@@ -194,7 +193,7 @@ class TowerDefenseWorldEnv(gym.Env):
 
         self.current_episode_actions.append(deepcopy(game_action))
 
-        response = requests.post(url + "step", json=game_action)
+        response = requests.post(self.url + "step", json=game_action)
         
         # 非法错误情况: 建塔位置在路径上或已被占用，或玩家资金不足
         if response.status_code != 200:
@@ -463,7 +462,7 @@ class TowerDefenseWorldEnv(gym.Env):
 
         if self.render_mode == "rgb_array":
             try:
-                res = requests.get(url + "render")
+                res = requests.get(self.url + "render")
                 if res.status_code == 200:
                     img = Image.open(io.BytesIO(res.content))
                     if img.size != (target_w, target_h):

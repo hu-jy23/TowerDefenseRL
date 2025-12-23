@@ -4,5 +4,8 @@
     "mean_time_fps": 330,
     "mean_episode_steps": 2500,
     "env_name": "gymnasium_env/TowerDefenseWorld-v0",
-    "seed": 87
+    "seed": 87,
+    "learning_rate": 3e-4,
+    "gamma": 0.995,
+    "ent_coef": 0.0
 }

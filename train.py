@@ -28,7 +28,10 @@ def load_config():
         "mean_time_fps": 330,
         "mean_episode_steps": 2500,
         "env_name": "gymnasium_env/TowerDefenseWorld-v0",
-        "seed": 87
+        "seed": 87,
+        "learning_rate": 3e-4,
+        "gamma": 0.995,
+        "ent_coef": 0.0
     }
     
     loaded_file = "Hardcoded Defaults"
@@ -109,9 +112,9 @@ def make_model(algo: str,
                 env,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
-                learning_rate=3e-4,
-                gamma=0.995,  # 折扣因子，越接近1越重视长期奖励
-                ent_coef=0,  # 熵系数，越大越鼓励探索
+                learning_rate=CONFIG["learning_rate"],
+                gamma=CONFIG["gamma"],  # 折扣因子，越接近1越重视长期奖励
+                ent_coef=CONFIG["ent_coef"],  # 熵系数，越大越鼓励探索
                 # 3. 自定义网络架构 (可选)
                 # feature_extractor 会自动用 CNN 处理 map_input，用 MLP 处理 global_input
                 # 下面的 net_arch 是处理完提取特征后，最后决策层的网络
@@ -163,9 +166,11 @@ def main(load_model_path: str | None,
 
     try:
         # 记录训练开始信息到日志 trainning.log 里
+        logging.info(f"==================================================")
         logging.info(f"--- Starting New Training Run ---")
         logging.info(f"Algorithm: {algo}")
         logging.info(f"Environment: {env_name} (reset seed = {seed})")
+        logging.info(f"Config: {json.dumps(CONFIG, indent=4)}")
         logging.info(
             f"Total Timesteps: {training_steps} (~{training_steps * 0.1 / 3600:.2f} hours of playing)"
         )

@@ -1,5 +1,6 @@
 from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
+import logging
 
 class TensorboardInfoCallback(BaseCallback):
     """
@@ -28,6 +29,14 @@ class TensorboardInfoCallback(BaseCallback):
         super().__init__(verbose)
         self.episode_wave_numbers = []
         self.episode_tower_counts = {}
+
+    def _on_training_start(self) -> None:
+        """
+        在训练开始时调用。
+        """
+        # self.logger.dir 包含了 TensorBoard 日志目录的路径，例如 "./logs/PPO_1"
+        tb_log_dir = self.logger.dir
+        logging.info(f"TensorBoard log directory: {tb_log_dir}")
 
     def _on_step(self) -> bool:
         """

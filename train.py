@@ -72,7 +72,8 @@ def make_env(random_maps_path: str | None,
              seed_value: int = seed,
              episode_gap: int = int(episode_recording_gap),
              run_prefix: str | None = None,
-             use_hierarchical: bool = False):
+             use_hierarchical: bool = False,
+             port: int = 3000):
     """
     创建并包装 Tower Defense 环境。
     - 负责 gym.make + wrap_env + RandomMapWrapper
@@ -81,7 +82,7 @@ def make_env(random_maps_path: str | None,
     if run_prefix is None:
         run_prefix = datetime.datetime.now().strftime("%d.%m.%Y_%H.%M")
 
-    env = gym.make(env_name)
+    env = gym.make(env_name, port=port)
     env = wrap_env(env, episode_gap, run_prefix)
 
     if random_maps_path:
@@ -246,7 +247,8 @@ def make_model(algo: str,
 def main(load_model_path: str | None,
          random_maps_path: str | None,
          algo: str,
-         run_prefix: str | None):
+         run_prefix: str | None,
+         port: int = 3000):
     
     # 决定 TensorBoard 的日志名称 (logs/ 下的文件夹名)
     # 如果用户没传 prefix，就用算法名 (SB3 会自动加 _1, _2) -> logs/ppo_1
@@ -276,7 +278,8 @@ def main(load_model_path: str | None,
         seed_value=seed,
         episode_gap=int(episode_recording_gap),
         run_prefix=model_run_prefix,
-        use_hierarchical=(algo == "dqn_hierarchical")
+        use_hierarchical=(algo == "dqn_hierarchical"),
+        port=port
     )
 
     # save 3 checkpoints
@@ -377,6 +380,12 @@ def parse_arguments():
         type=str,
         help="Optional name for the run (used for logs and models folder). If not provided, a timestamped name will be generated.",
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=3000,
+        help="Port of the game server to connect to (default: 3000).",
+    )
     return parser.parse_args()
 
 
@@ -387,4 +396,5 @@ if __name__ == "__main__":
         random_maps_path=args.random_maps,
         algo=args.algo,
         run_prefix=args.run_prefix,
+        port=args.port,
     )

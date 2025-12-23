@@ -7,15 +7,14 @@ from PIL import Image
 import numpy as np
 from gymnasium import spaces
 
-url = "http://localhost:3000/"
-
 class TowerDefenseWorldEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
     
     # define action_space and observation_space
-    def __init__(self, render_mode="rgb_array"):
+    def __init__(self, render_mode="rgb_array", port=3000):
         self.render_mode = render_mode
-        response = requests.get(url + "info")
+        self.url = f"http://localhost:{port}/"
+        response = requests.get(self.url + "info")
         if response.status_code != 200:
             raise ConnectionError(f"Failed to get game info: {response.text}")
 
@@ -55,7 +54,7 @@ class TowerDefenseWorldEnv(gym.Env):
     # reset the environment and return the initial observation and info
     def reset(self, seed=None, options=None) -> tuple[np.ndarray, dict]:
         super().reset(seed=seed)
-        response = requests.post(url + "reset")
+        response = requests.post(self.url + "reset")
         if response.status_code != 200:
             raise ConnectionError(f"Failed to reset game: {response.text}")
 
@@ -78,7 +77,7 @@ class TowerDefenseWorldEnv(gym.Env):
         # log the action taken
         self.current_episode_actions.append(deepcopy(game_action))
 
-        response = requests.post(url + "step", json = game_action)
+        response = requests.post(self.url + "step", json = game_action)
         if response.status_code != 200:
             last_observation = self.__get_observation()
             info = self.__get_info()
@@ -98,7 +97,7 @@ class TowerDefenseWorldEnv(gym.Env):
     def render(self) -> np.ndarray:
         black_frame = np.zeros((self.game_info["map"]["height"], self.game_info["map"]["width"], 3), dtype=np.uint8)
         if self.render_mode == "rgb_array":
-            response = requests.get(url + "render")
+            response = requests.get(self.url + "render")
             if response.status_code != 200:
                 print(f"Error during render: {response.text}")
                 return black_frame

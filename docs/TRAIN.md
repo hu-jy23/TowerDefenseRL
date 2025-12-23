@@ -151,6 +151,8 @@ rm -rf logs/* models/*
 
 Bash
 python train.py --algo ppo
+
+caffeinate -ims python train.py --algo dqn_hierarchical
 如果 PPO 能稳定运行 5 分钟不崩，再尝试开启 DQN：
 
 Bash

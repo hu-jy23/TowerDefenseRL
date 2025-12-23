@@ -45,3 +45,4 @@ training.logs
 nohup.out
 
 tmp/
+otherlogs/

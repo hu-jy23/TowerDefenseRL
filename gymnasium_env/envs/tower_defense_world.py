@@ -249,7 +249,20 @@ class TowerDefenseWorldEnv(gym.Env):
                 if path_coverage == 0:
                     reward -= 30
                 else:
-                    reward += tower_info["cost"] * tower_info["dps"] * path_coverage / 100
+                    # reward += tower_info["cost"] * tower_info["dps"] * path_coverage / 100
+                    # === 修改开始 ===
+                    # 获取该塔的 AOE 半径（如果 API 没传则为 0）
+                    blast_radius = tower_info.get("blast_radius", 0)
+                    
+                    # 估算有效 DPS：如果是 AOE 塔，假设它能打 1.5 个怪 (1.5x 收益)
+                    # 这样 Cannon (DPS 15) 的估算值就是 15 * 1.5，性价比超过 Archer
+                    effective_dps = tower_info["dps"]
+                    if blast_radius > 0:
+                        effective_dps *= 1.5 
+                    
+                    # 使用 effective_dps 计算奖励
+                    reward += tower_info["cost"] * effective_dps * path_coverage / 100
+                    # === 修改结束 ===
 
         # - hoarding money uselessly
         if new_game_state["money"] > self.most_expensive_tower_cost:

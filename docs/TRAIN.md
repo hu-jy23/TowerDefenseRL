@@ -33,6 +33,12 @@ cd ~/shared-nvme/TowerDefenseGame
 cd ../TowerDefenseGame
 npm run start:api
 
+http://localhost:3000
+
+npm run dev
+
+http://localhost:5173
+
 # 这一步完成后，屏幕会被服务器日志占据。
 
 # 不要关闭此 Pane！

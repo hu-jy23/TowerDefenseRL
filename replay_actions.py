@@ -84,7 +84,7 @@ def main(actions_file, save_frames, load_dir):
 
         try:
             requests.post(SET_MAP_ENDPOINT, json=DEFAULT_MAP_WAYPOINTS).raise_for_status()
-            requests.post(RESET_ENDPOINT).raise_for_status()
+            requests.post(RESET_ENDPOINT, json={}).raise_for_status()
 
             start_time = datetime.datetime.now()
             for i, action in enumerate(actions):
@@ -130,6 +130,14 @@ def main(actions_file, save_frames, load_dir):
         print("No frames to display. Exiting.")
         return
 
+    # Check if we have a display environment (for headless servers)
+    has_display = os.environ.get('DISPLAY') is not None
+    if not has_display:
+        print("\nNo display detected. Skipping visual replay.")
+        if save_frames:
+            print(f"Frames have been saved to: {save_dir}")
+        return
+
     print("\n--- Starting replay ---")
     if target_wave != 0:
         print(f"Episode reached wave: {target_wave}")
@@ -164,4 +172,7 @@ if __name__ == "__main__":
     try:
         main(args.actions_file, args.save_frames, args.load_dir)
     finally:
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except:
+            pass

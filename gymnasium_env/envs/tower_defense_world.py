@@ -10,11 +10,12 @@ url = "http://localhost:3000/"
 
 class TowerDefenseWorldEnv(gym.Env):
     """
-    塔防游戏环境类 (Outcome-based Reward Version)
+    塔防游戏环境类 (Curriculum Learning Version)
     
-    主要更新:
-    1. 奖励函数重构: 移除静态建塔奖励，改为基于每帧造成的实际伤害(Damage-based)奖励。
-    2. 解决 Agent 短视问题，鼓励根据战局攒钱造高输出塔。
+    集成特性:
+    1. 课程学习 (Curriculum Learning): 在 reset 时随机进入中后期局面。
+    2. 动作屏蔽 (Action Masking): 在后期强制屏蔽低级塔，引导策略升级。
+    3. 结果导向奖励 (Outcome-based Reward): 基于伤害量的奖励机制。
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
     
@@ -95,20 +96,48 @@ class TowerDefenseWorldEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        
+        # === 课程学习调度器 (Curriculum Scheduler) ===
+        # 30% 正常开局: 验证全流程能力
+        # 40% Sniper特训 (Wave 12, Money 400): 强迫面对高甲怪，钱管够
+        # 30% Cannon特训 (Wave 6, Money 200): 强迫面对密集怪群
+        
+        rand_val = np.random.random()
+        reset_payload = {}
+
+        if rand_val < 0: 
+            # [特训模式 A: 绝境求生] -> 针对 Tank/Sniper
+            # 直接跳到 Archer 流的崩溃边缘 (Wave 12)
+            # 第 12 波开始前，此时手上有 252 金币
+            reset_payload = {"start_wave": 12, "start_money": 252}
+            # print(f"[Curriculum] Hard Mode: Wave 12, Money 252")
+            
+        elif rand_val < 0:
+            # [特训模式 B: 密集防守] -> 针对 Fast/Cannon
+            # 跳到怪群开始密集的阶段
+            # 第 6 波开始前，此时手上有 98 金币
+            reset_payload = {"start_wave": 6, "start_money": 98}
+            # print(f"[Curriculum] Swarm Mode: Wave 6, Money 98")
+            
+        else:
+            # [正常模式]
+            reset_payload = {}
+            # print(f"[Curriculum] Normal Start")
+
         try:
-            response = requests.post(url + "reset")
+            response = requests.post(url + "reset", json=reset_payload)
             if response.status_code != 200:
                 raise ConnectionError(f"Failed to reset game: {response.text}")
             self.game_state = response.json()
+            
+            # 初始化血量追踪
+            self.prev_total_health = self._get_total_health(self.game_state["enemies"])
+            
         except Exception as e:
             print(f"Reset error: {e}")
             self.game_state = self._get_empty_state()
 
         self.current_episode_actions = []
-        
-        # 初始化总血量追踪
-        self.prev_total_health = self._get_total_health(self.game_state["enemies"])
-        
         observation = self.__get_observation()
         info = self.__get_info()
         return observation, info
@@ -359,8 +388,11 @@ class TowerDefenseWorldEnv(gym.Env):
         return float(reward)
 
     def action_masks(self) -> np.ndarray:
+        # [修改] 加入基于规则的 Masking，防止后期乱花钱
+        
         action_mask = np.ones(len(self.action_types), dtype=bool)
         
+        # 1. 钱不够基础 Mask
         min_cost = min(t["cost"] for t in self.tower_types)
         if self.game_state["money"] < min_cost:
             for idx, act in enumerate(self.action_types):
@@ -369,10 +401,20 @@ class TowerDefenseWorldEnv(gym.Env):
                     break
 
         tower_mask = np.ones(len(self.tower_types), dtype=bool)
+        
+        # [新规则]：如果钱很多 (>200) 且到了后期 (>Wave 10)，强制禁止买 Archer
+        # 强迫 Agent 只能买 Cannon/Sniper
+        force_high_tech = (self.game_state["money"] > 200 and self.game_state["waveNumber"] > 10)
+        
         for idx, t in enumerate(self.tower_types):
+            # 基础规则: 钱不够或没解锁
             if (self.game_state["money"] < t["cost"] or 
                 self.game_state["waveNumber"] < t.get("unlock_wave", 0)):
                 tower_mask[idx] = False
+            
+            # 进阶规则: 强制消费升级
+            if force_high_tech and t["type"] == "archer":
+                tower_mask[idx] = False # 禁止买 Archer
 
         x_mask = np.ones(self.cols, dtype=bool)
         y_mask = np.ones(self.rows, dtype=bool)

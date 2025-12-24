@@ -31,6 +31,8 @@ Bash
 cd ~/shared-nvme/TowerDefenseGame
 
 cd ../TowerDefenseGame
+
+cd ../TowerDefenseGame/
 npm run start:api
 
 http://localhost:3000
@@ -152,7 +154,13 @@ rm -rf logs/* models/*
 Bash
 python train.py --algo ppo
 
-caffeinate -ims python train.py --algo dqn_hierarchical
+caffeinate -ims python train.py --algo dqn --port 3000
+
+caffeinate-ims python train.py--algo ppo --port 3001
+
+caffeinate -ims python train.py --algo ppo_hierarchical --port 3000
+
+caffeinate -ims python train.py --algo dqn_hierarchical --port 3002
 如果 PPO 能稳定运行 5 分钟不崩，再尝试开启 DQN：
 
 Bash

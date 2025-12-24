@@ -6,7 +6,7 @@ import logging
 import datetime
 from stable_baselines3.common.callbacks import CheckpointCallback
 from sb3_contrib import MaskablePPO
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
 from gymnasium_env.wrappers.random_map_wrapper import RandomMapWrapper
 from gymnasium_env.wrappers.wrap import wrap_env
 from gymnasium_env.wrappers.flatten_multidiscrete import FlattenMultiDiscreteAction
@@ -111,12 +111,12 @@ def make_model(algo: str,
     """
 
     # --- [关键修改：自动识别设备] ---
-    if torch.cuda.is_available():
-        device = "cuda"
-    elif torch.backends.mps.is_available(): # 识别你的 Mac M 系列芯片
-        device = "mps"
-    else:
-        device = "cpu"
+    # if torch.cuda.is_available():
+    #     device = "cuda"
+    # elif torch.backends.mps.is_available(): # 识别你的 Mac M 系列芯片
+    #     device = "mps"
+    # else:
+    device = "cpu"
     
     logging.info(f"Using device: {device}")
     print(f"Detected device: {device}")
@@ -191,12 +191,40 @@ def make_model(algo: str,
                 buffer_size=50000,
                 learning_starts=1000,
                 batch_size=128,
-                
+                gamma=1.0,  # 取消时间折扣，未来奖励不打折
                 # [新增修复] 强制增加探索时间
                 exploration_fraction=0.5,     # 在前 50% 的时间里保持探索衰减
                 exploration_initial_eps=1.0,  # 初始 100% 随机
                 exploration_final_eps=0.05,   # 最终保留 5% 随机
                 
+                verbose=1,
+                tensorboard_log=tensorboard_log,
+                policy_kwargs=policy_kwargs,
+                device=device
+            )
+        return model
+
+    elif algo == "ppo_hierarchical":
+        # 使用 HierarchicalActionWrapper，动作空间已经是 Discrete(4)
+        # 不需要 action masking，因为 hierarchical wrapper 内部处理了没钱/没地的情况
+        # 使用普通 PPO 而不是 MaskablePPO
+        
+        if load_model_path:
+            logging.info(f"[Algo=ppo_hierarchical] Loading model from: {load_model_path}")
+            model = PPO.load(load_model_path, env, tensorboard_log=tensorboard_log, device=device)
+        else:
+            logging.info("[Algo=ppo_hierarchical] Creating new PPO model (MlpPolicy)")
+            policy_kwargs = dict(net_arch=[256, 256])
+            model = PPO(
+                "MlpPolicy",
+                env,
+                learning_rate=3e-4,
+                n_steps=2048,
+                batch_size=64,
+                n_epochs=10,
+                gamma=1.0,  # 取消时间折扣
+                gae_lambda=0.95,
+                clip_range=0.2,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
                 policy_kwargs=policy_kwargs,
@@ -278,7 +306,7 @@ def main(load_model_path: str | None,
         seed_value=seed,
         episode_gap=int(episode_recording_gap),
         run_prefix=model_run_prefix,
-        use_hierarchical=(algo == "dqn_hierarchical"),
+        use_hierarchical=(algo in ["dqn_hierarchical", "ppo_hierarchical"]),
         port=port
     )
 

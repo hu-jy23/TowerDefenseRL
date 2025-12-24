@@ -14,7 +14,9 @@ class TowerDefenseWorldEnv(gym.Env):
     def __init__(self, render_mode="rgb_array", port=3000):
         self.render_mode = render_mode
         self.url = f"http://localhost:{port}/"
-        response = requests.get(self.url + "info")
+        # 创建 Session 复用连接，避免端口耗尽
+        self.session = requests.Session()
+        response = self.session.get(self.url + "info")
         if response.status_code != 200:
             raise ConnectionError(f"Failed to get game info: {response.text}")
 
@@ -54,7 +56,7 @@ class TowerDefenseWorldEnv(gym.Env):
     # reset the environment and return the initial observation and info
     def reset(self, seed=None, options=None) -> tuple[np.ndarray, dict]:
         super().reset(seed=seed)
-        response = requests.post(self.url + "reset")
+        response = self.session.post(self.url + "reset")
         if response.status_code != 200:
             raise ConnectionError(f"Failed to reset game: {response.text}")
 
@@ -77,7 +79,7 @@ class TowerDefenseWorldEnv(gym.Env):
         # log the action taken
         self.current_episode_actions.append(deepcopy(game_action))
 
-        response = requests.post(self.url + "step", json = game_action)
+        response = self.session.post(self.url + "step", json = game_action)
         if response.status_code != 200:
             last_observation = self.__get_observation()
             info = self.__get_info()
@@ -97,7 +99,7 @@ class TowerDefenseWorldEnv(gym.Env):
     def render(self) -> np.ndarray:
         black_frame = np.zeros((self.game_info["map"]["height"], self.game_info["map"]["width"], 3), dtype=np.uint8)
         if self.render_mode == "rgb_array":
-            response = requests.get(self.url + "render")
+            response = self.session.get(self.url + "render")
             if response.status_code != 200:
                 print(f"Error during render: {response.text}")
                 return black_frame
@@ -115,7 +117,8 @@ class TowerDefenseWorldEnv(gym.Env):
     
     # just to comply with the interface
     def close(self):
-        pass
+        if hasattr(self, 'session'):
+            self.session.close()
 
     # create an action mask to disable illegal actions
     def action_masks(self) -> np.ndarray:
@@ -248,20 +251,20 @@ class TowerDefenseWorldEnv(gym.Env):
                 if path_coverage == 0:
                     reward -= 30
                 else:
-                    # reward += tower_info["cost"] * tower_info["dps"] * path_coverage / 100
-                    # === 修改开始 ===
-                    # 获取该塔的 AOE 半径（如果 API 没传则为 0）
+                    # 鼓励建造 cannon 和 sniper 塔：建造时给予额外奖励
+                    if tower_info["type"] in ["cannon", "sniper"]:
+                        reward += tower_info["cost"] * 2  # 可调节倍数
+                    # 原有的有效 dps 奖励
                     blast_radius = tower_info.get("blast_radius", 0)
-                    
-                    # 估算有效 DPS：如果是 AOE 塔，假设它能打 1.5 个怪 (1.5x 收益)
-                    # 这样 Cannon (DPS 15) 的估算值就是 15 * 1.5，性价比超过 Archer
                     effective_dps = tower_info["dps"]
                     if blast_radius > 0:
                         effective_dps *= 1.5 
-                    
-                    # 使用 effective_dps 计算奖励
                     reward += tower_info["cost"] * effective_dps * path_coverage / 100
-                    # === 修改结束 ===
+        else:
+            # 没有建塔时，如果钱接近最贵塔，鼓励攒钱
+            money = new_game_state["money"]
+            if money >= 0.4 * self.most_expensive_tower_cost and money < self.most_expensive_tower_cost:
+                reward += 10  # 可调节
 
         # - hoarding money uselessly
         if new_game_state["money"] > self.most_expensive_tower_cost:

@@ -65,7 +65,7 @@ In the `logs/` directory, a log file containing training metrics (visible via Te
     ```
 2. Execute script specifying the model path:
     ```bash
-    python train.py --load-model ./path/to/maskable_ppo_tower_defense.zip
+    python train.py --load-model ./models/data_time/ppo_tower_defense.zip
     ```
 
 ### Replay best agent game (works only for the default map for now)

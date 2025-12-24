@@ -409,7 +409,7 @@ class TowerDefenseWorldEnv(gym.Env):
 
         # 6. 金币利息奖励 (Interest Reward)
         # R_eco = w_e * current_money
-        # 鼓励攒钱：每一步持有金币都有收益
+        # 鼓励攒钱：每一帧持有金币都有收益
         money = new_game_state["money"]
         reward += money * w["interest_weight"]
 

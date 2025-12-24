@@ -422,9 +422,35 @@ class TowerDefenseWorldEnv(gym.Env):
         return float(reward)
 
     def action_masks(self) -> np.ndarray:
-        # [升级版] 消费升级锁 (Consumption Lock)
-        
         action_mask = np.ones(len(self.action_types), dtype=bool)
+        tower_mask = np.ones(len(self.tower_types), dtype=bool)
+        x_mask = np.ones(self.cols, dtype=bool)
+        y_mask = np.ones(self.rows, dtype=bool)
+        
+        # 获取当前状态
+        money = self.game_state["money"]
+        wave = self.game_state["waveNumber"]
+        towers_count = len(self.game_state["towers"])
+        sniper_cost = next((t["cost"] for t in self.tower_types if t["type"] == "sniper"), 45)
+        
+        # === 步骤 A: 先计算 Tower Mask (哪些塔能造) ===
+        for idx, t in enumerate(self.tower_types):
+            # 1. 基础规则: 钱不够 或 没解锁 -> 禁止
+            if (money < t["cost"] or wave < t.get("unlock_wave", 0)):
+                tower_mask[idx] = False
+                continue
+            
+            # 2. [消费升级锁] 规则 A: 富人强制消费
+            # 如果买得起 Sniper，严禁买 Archer
+            if money >= sniper_cost and t["type"] == "archer":
+                tower_mask[idx] = False
+                continue
+            
+            # 3. [消费升级锁] 规则 B: 中产阶级陷阱
+            # 中期 (Wave 4-8) 且已有 2 个塔，禁止买 Archer
+            if 4 <= wave <= 8 and towers_count >= 2 and t["type"] == "archer":
+                tower_mask[idx] = False
+                continue
         
         # 1. 基础规则: 钱不够 Mask
         min_cost = min(t["cost"] for t in self.tower_types)
@@ -434,39 +460,27 @@ class TowerDefenseWorldEnv(gym.Env):
                     action_mask[idx] = False
                     break
 
-        tower_mask = np.ones(len(self.tower_types), dtype=bool)
-        
-        # 获取当前状态
-        money = self.game_state["money"]
-        wave = self.game_state["waveNumber"]
-        towers_count = len(self.game_state["towers"])
-        
-        # 获取塔的元数据
-        sniper_cost = next((t["cost"] for t in self.tower_types if t["type"] == "sniper"), 45)
-        cannon_cost = next((t["cost"] for t in self.tower_types if t["type"] == "cannon"), 30)
-        
-        for idx, t in enumerate(self.tower_types):
-            # 2. 基础规则: 钱不够或没解锁 -> False
-            if (money < t["cost"] or wave < t.get("unlock_wave", 0)):
-                tower_mask[idx] = False
-                continue
-            
-            # === [核心] 消费升级逻辑 ===
-            
-            # 规则 A: 富人强制消费 (针对 Scenario 1)
-            # 只要买得起 Sniper (45块), 严禁买 Archer (20块)
-            # 逻辑: "有钱必须花在刀刃上"
-            if money >= sniper_cost and t["type"] == "archer":
-                tower_mask[idx] = False
-            
-            # 规则 B: 中产阶级陷阱 (针对 Scenario 2)
-            # 如果是中期 (Wave 4-8), 且已经有两个 Archer 了
-            # 禁止继续买 Archer, 逼迫买 Cannon 或存钱买 Sniper
-            if 4 <= wave <= 8 and towers_count >= 2 and t["type"] == "archer":
-                tower_mask[idx] = False
+        # === 步骤 B: 根据 Tower Mask 反推 Action Mask ===
+        # 检查是否还有任何一个塔是可建造的
+        can_build_any_tower = np.any(tower_mask)
 
-        x_mask = np.ones(self.cols, dtype=bool)
-        y_mask = np.ones(self.rows, dtype=bool)
+        # 找到 BUILD_TOWER 动作在 action_types 中的索引
+        build_action_idx = -1
+        for idx, act in enumerate(self.action_types):
+            if act["type"] == "BUILD_TOWER":
+                build_action_idx = idx
+                break
+        
+        # 如果没有任何塔能造 (全被禁了)，则强制禁止 BUILD_TOWER 动作
+        if not can_build_any_tower:
+            if build_action_idx != -1:
+                action_mask[build_action_idx] = False
+            
+            # 如果 Action 选了 "不造塔"，那么 Tower 维度的选择就无关紧要了。
+            # 但 PPO 仍然需要计算 Tower 维度的概率分布，不能全是 False。
+            # 所以，当不能造塔时，我们把 tower_mask 设为全 True (或者只留一个 True)，
+            # 这样网络可以输出任意值，反正 Action 维度已经决定了不会执行建造。
+            tower_mask[:] = True 
 
         return np.concatenate([action_mask, tower_mask, x_mask, y_mask])
 

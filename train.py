@@ -60,10 +60,10 @@ mean_time_fps = CONFIG["mean_time_fps"]
 mean_episode_steps = CONFIG["mean_episode_steps"]
 env_name = CONFIG["env_name"]
 seed = CONFIG["seed"]
+
 training_steps = round(mean_time_fps * hours_to_train * 3600)  # total number of training steps
-episode_recording_gap = (training_steps / mean_episode_steps) // video_number  # one episode = one game
-if episode_recording_gap < 1:
-    episode_recording_gap = 1
+# 直接设置每500个episode录制一次视频
+episode_recording_gap = 500
 
 
 # ========= 抽出来的模块化函数 =========
@@ -205,17 +205,16 @@ def make_model(algo: str,
         return model
 
     elif algo == "ppo_hierarchical":
-        # 使用 HierarchicalActionWrapper，动作空间已经是 Discrete(4)
-        # 不需要 action masking，因为 hierarchical wrapper 内部处理了没钱/没地的情况
-        # 使用普通 PPO 而不是 MaskablePPO
+        # 使用 HierarchicalActionWrapper，动作空间已经是 Discrete(1 + N_towers)
+        # 使用 MaskablePPO 来支持 action masking，避免选择未解锁的塔
         
         if load_model_path:
             logging.info(f"[Algo=ppo_hierarchical] Loading model from: {load_model_path}")
-            model = PPO.load(load_model_path, env, tensorboard_log=tensorboard_log, device=device)
+            model = MaskablePPO.load(load_model_path, env, tensorboard_log=tensorboard_log, device=device)
         else:
-            logging.info("[Algo=ppo_hierarchical] Creating new PPO model (MlpPolicy)")
+            logging.info("[Algo=ppo_hierarchical] Creating new MaskablePPO model (MlpPolicy)")
             policy_kwargs = dict(net_arch=[256, 256])
-            model = PPO(
+            model = MaskablePPO(
                 "MlpPolicy",
                 env,
                 learning_rate=3e-4,

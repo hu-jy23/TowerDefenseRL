@@ -107,16 +107,22 @@ def main(actions_file, save_frames, load_dir):
                 image = Image.open(image_bytes).convert("RGB")
                 frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
                 frames.append(frame)
-            
+
             print(f"\nFrame collection complete. Collected {len(frames)} frames in {(datetime.datetime.now() - start_time).seconds} seconds.")
             # save only after collecting all frames
             if save_dir:
-                print(f"Frames will be saved to: {save_dir}")
+                print(f"Video will be saved to: {save_dir}")
                 os.makedirs(save_dir, exist_ok=True)
-                for i, frame in enumerate(frames):
-                    print(f"Saving frame {i + 1}/{len(frames)}...", end='\r')
-                    frame_filename = os.path.join(save_dir, f"frame_{i:04d}.png")
-                    cv2.imwrite(frame_filename, frame)
+                # 只保存视频文件，不保存每一帧图片
+                video_path = os.path.join(save_dir, "replay_video.mp4")
+                if len(frames) > 0:
+                    height, width, _ = frames[0].shape
+                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                    out = cv2.VideoWriter(video_path, fourcc, 60, (width, height))
+                    for frame in frames:
+                        out.write(frame)
+                    out.release()
+                    print(f"\nVideo saved to: {video_path}")
 
         except Exception as e:
             print(f"\nAn error occurred during frame collection: {e}")

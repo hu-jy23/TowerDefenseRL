@@ -13,6 +13,7 @@ from gymnasium_env.wrappers.flatten_multidiscrete import FlattenMultiDiscreteAct
 from custom_callbacks.tensor_board_info import TensorboardInfoCallback
 from custom_callbacks.save_agent_actions import SaveAgentActionsCallback
 import argparse
+import json
 
 
 def load_config():
@@ -31,7 +32,16 @@ def load_config():
         "seed": 87,
         "learning_rate": 3e-4,
         "gamma": 0.995,
-        "ent_coef": 0.0
+        "ent_coef": 0.0,
+        "reward_weights": {
+            "damage_weight": 0.01,
+            "kill_weight": 1.0,
+            "leak_penalty_weight": 20.0,
+            "game_over_penalty_weight": 100.0,
+            "wave_clear_reward": 5.0,
+            "interest_weight": 0.0005,
+            "maintenance_penalty_weight": 0.005
+        }
     }
     
     loaded_file = "Hardcoded Defaults"
@@ -68,7 +78,8 @@ def make_env(random_maps_path: str | None,
              seed_value: int = seed,
              episode_gap: int = int(episode_recording_gap),
              run_prefix: str | None = None,
-             port: int = 3000):  # 新增 port 参数
+             port: int = 3000,
+             reward_config: dict | None = None):  # 新增 reward_config 参数
     """
     创建并返回环境。
     """
@@ -76,7 +87,7 @@ def make_env(random_maps_path: str | None,
         run_prefix = datetime.datetime.now().strftime("%d.%m.%Y_%H.%M")
   
     # 创建环境实例 TowerDefenseWorldEnv
-    env = gym.make(env_name, port=port)  # 新增 port 参数传递
+    env = gym.make(env_name, port=port, reward_config=reward_config)  # 新增 reward_config 参数传递
   
     # 如果传了 random_maps_path，RandomMapWrapper 会让 reset() 时随机换一张新图，然后再重置游戏。
     if random_maps_path:
@@ -132,7 +143,7 @@ def make_model(algo: str,
 def main(load_model_path: str | None,
          random_maps_path: str | None,
          algo: str,
-         port: int = 3000):  # 新增 port 参数
+         port: int = 3000):
     """
     主训练函数。
     """
@@ -151,7 +162,8 @@ def main(load_model_path: str | None,
         seed_value=seed,
         episode_gap=int(episode_recording_gap),
         run_prefix=run_prefix,
-        port=port  # 新增 port 参数传递
+        port=port,  # 新增 port 参数传递
+        reward_config=CONFIG.get("reward_weights")  # 新增 reward_config 参数传递
     )
 
     # 三个回调函数

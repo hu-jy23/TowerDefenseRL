@@ -1,5 +1,11 @@
 # Tower Defense Game API 服务接口文档
 
+可以通过设置 `PORT` 环境变量来自定义 API 服务器端口：
+```bash
+PORT=3001 npm run start:api
+```
+默认端口为 3000，支持多端口同时训练。
+
 ## 概述
 
 Tower Defense Game API 提供了一系列 RESTful 接口，用于获取游戏信息、控制游戏状态和渲染游戏画面。以下是主要接口及其返回参数的详细说明。

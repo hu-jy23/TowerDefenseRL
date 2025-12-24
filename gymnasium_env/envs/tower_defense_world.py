@@ -17,9 +17,23 @@ class TowerDefenseWorldEnv(gym.Env):
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
     
-    def __init__(self, render_mode="rgb_array", port=3000):
+    def __init__(self, render_mode="rgb_array", reward_config=None, port=3000):
         self.render_mode = render_mode
         self.url = f"http://localhost:{port}/"
+        
+        # [新增] 初始化奖励权重
+        # 如果没有传入配置，使用硬编码的默认值作为兜底
+        default_weights = {
+            "damage_weight": 0.01,
+            "kill_weight": 1.0,
+            "leak_penalty_weight": 20.0,
+            "game_over_penalty_weight": 100.0,
+            "wave_clear_reward": 5.0,
+            "interest_weight": 0.0005,
+            "maintenance_penalty_weight": 0.005
+        }
+        self.reward_weights = reward_config if reward_config else default_weights
+        
         try:
             # 获取游戏初始化信息
             response = requests.get(self.url + "info")
@@ -114,7 +128,7 @@ class TowerDefenseWorldEnv(gym.Env):
             {"type": "archer", "x": 725, "y": 225}
         ]
 
-        if rand_val < 0.4: 
+        if rand_val < 0: 
             # [模式 A: 专家残局 - 学习造 Sniper] (40% 概率)
             # 场景: Wave 9, 62块, 已有火力基础
             # 目标: 配合 Mask, Agent 只能买 Sniper, 体验后期高回报
@@ -125,7 +139,7 @@ class TowerDefenseWorldEnv(gym.Env):
             }
             # print(f"[Curriculum] Scenario 1: Expert Late Game")
             
-        elif rand_val < 0.7:
+        elif rand_val < 0:
             # [模式 B: 过渡残局 - 学习造 Cannon] (30% 概率)
             # 场景: Wave 6, 40块, 只有基础弓
             # 目标: 配合 Mask, Agent 必须买 Cannon 才能守住怪群
@@ -355,55 +369,56 @@ class TowerDefenseWorldEnv(gym.Env):
 
     def __calculate_reward(self, new_game_state: dict) -> float:
         """
-        基于伤害 (Damage-based) 的奖励函数
-            + 造成伤害 (Damage Reward)
-            + 击杀奖励 (Kill Reward)
-            - 漏怪惩罚 (Leak Penalty)
-            + 波次推进奖励 (Wave Progression Reward)
-            - 游戏结束惩罚 (Game Over Penalty)
+        计算奖励 (Heuristic + Outcome based)
+        权重读取自 self.reward_weights
         """
         reward = 0.0
         old_state = self.game_state
+        w = self.reward_weights
         
-        # 1. 计算血量差值 (Damage Reward)
-        # 场上总血量减少 = 造成的伤害 + 敌人死亡 + 敌人漏掉
+        # 1. 伤害奖励 (Damage Reward)
+        # R_dmg = w_d * damage
         current_total_hp = self._get_total_health(new_game_state["enemies"])
         hp_reduction = self.prev_total_health - current_total_hp
-        
-        # 如果新怪生成导致总血量增加(hp_reduction < 0)，我们不惩罚，记为0
-        # 只有血量减少才算有效输出
         if hp_reduction > 0:
-            # 缩放系数: 假设一波怪总血量 1000，打完给 10 分
-            reward += hp_reduction * 0.01 
+            reward += hp_reduction * w["damage_weight"]
 
         # 2. 击杀奖励 (Kill Reward)
-        # 鼓励完成最后一击
+        # R_kill = w_k * kill_count
         kill_count = max(0, len(old_state["enemies"]) - len(new_game_state["enemies"]))
         if kill_count > 0:
-            reward += kill_count * 1.0
+            reward += kill_count * w["kill_weight"]
 
         # 3. 漏怪惩罚 (Leak Penalty)
-        # 必须重罚！
-        # 注意: 当怪漏掉时，它的血量会从 current_total_hp 中消失，导致 hp_reduction 变大，
-        # 从而错误的给了一个正奖励。所以这里的负惩罚必须足够大，覆盖掉那个误判的正奖励。
+        # R_leak = -w_l * lives_lost
         lives_lost = old_state["lives"] - new_game_state["lives"]
         if lives_lost > 0:
-            # 假设漏掉一个满血 Tank (150血)，Damage Reward 会误加 1.5分
-            # 所以惩罚至少要是 -20，确保 Agent 知道这是亏的
-            reward -= lives_lost * 20.0
+            reward -= lives_lost * w["leak_penalty_weight"]
 
-        # 4. 辅助奖励: 波次推进
-        if new_game_state["waveNumber"] > old_state["waveNumber"]:
-            reward += 5.0
-
-        # 5. 游戏结束惩罚
+        # 4. 游戏结束惩罚 (Game Over Penalty)
+        # R_over = -w_g
         if new_game_state["gameOver"]:
-            reward -= 100.0
+            reward -= w["game_over_penalty_weight"]
+
+        # 5. 波次推进奖励 (Wave Progression)
+        # R_wave = w_clear
+        if new_game_state["waveNumber"] > old_state["waveNumber"]:
+            reward += w["wave_clear_reward"]
+
+        # === [新增启发式奖励] ===
+
+        # 6. 金币利息奖励 (Interest Reward)
+        # R_eco = w_e * current_money
+        # 鼓励攒钱：每一步持有金币都有收益
+        money = new_game_state["money"]
+        reward += money * w["interest_weight"]
+
+        # 7. 维护费惩罚 (Maintenance Penalty)
+        # R_maint = -w_m * tower_count
+        # 惩罚造塔数量，鼓励"少而精" (Sniper > 3 Archers)
+        tower_count = len(new_game_state["towers"])
+        reward -= tower_count * w["maintenance_penalty_weight"]
             
-        # 6. (可选) 微小的闲置/囤钱惩罚
-        # 为了防止 Agent 在开局完全不造塔导致直接漏怪，
-        # 如果钱很多但场上塔很少，可以给一点微小压力，但伤害奖励通常足够驱动它造塔。
-        
         return float(reward)
 
     def action_masks(self) -> np.ndarray:
@@ -427,7 +442,7 @@ class TowerDefenseWorldEnv(gym.Env):
         towers_count = len(self.game_state["towers"])
         
         # 获取塔的元数据
-        sniper_cost = next((t["cost"] for t in self.tower_types if t["type"] == "sniper"), 50)
+        sniper_cost = next((t["cost"] for t in self.tower_types if t["type"] == "sniper"), 45)
         cannon_cost = next((t["cost"] for t in self.tower_types if t["type"] == "cannon"), 30)
         
         for idx, t in enumerate(self.tower_types):

@@ -418,6 +418,11 @@ class TowerDefenseWorldEnv(gym.Env):
         # 惩罚造塔数量，鼓励"少而精" (Sniper > 3 Archers)
         tower_count = len(new_game_state["towers"])
         reward -= tower_count * w["maintenance_penalty_weight"]
+        
+        # 8. 鼓励造 sniper (Sniper Bonus)
+        # 鼓励使用高阶塔 sniper
+        sniper_count = sum(1 for t in new_game_state["towers"] if t["type"] == "sniper")
+        reward += sniper_count * 0.05
             
         return float(reward)
 

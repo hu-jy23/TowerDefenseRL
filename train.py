@@ -6,6 +6,7 @@ import logging
 import datetime
 from stable_baselines3.common.callbacks import CheckpointCallback
 from sb3_contrib import MaskablePPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3 import DQN
 from gymnasium_env.wrappers.random_map_wrapper import RandomMapWrapper
 from gymnasium_env.wrappers.wrap import wrap_env
@@ -100,6 +101,14 @@ def make_env(random_maps_path: str | None,
     # ------ 不需要录像时可注释 ------ 
     # env = wrap_env(env, episode_gap, run_prefix)
     
+    # 使用 DummyVecEnv 包裹 (SB3 要求)
+    # env = DummyVecEnv([lambda: env])
+
+    # 自动归一化 Reward 和 Observation
+    # clip_obs: 限制观测值范围
+    # clip_reward: 限制奖励值范围 (防止 -100 这种巨值直接冲击网络)
+    # env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
+        
     return env
 
 
@@ -131,7 +140,7 @@ def make_model(algo: str,
                 # feature_extractor 会自动用 CNN 处理 map_input，用 MLP 处理 global_input
                 # 下面的 net_arch 是处理完提取特征后，最后决策层的网络
                 policy_kwargs=dict(
-                    net_arch=[256, 256] 
+                    net_arch=[512, 256] 
                 )
             )
         return model
@@ -207,7 +216,7 @@ def main(load_model_path: str | None,
             total_timesteps=training_steps,                                                    # 训练总步数
             callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],  # 回调函数列表，在训练过程中会被定期调用
             reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数，not bool() 表示加载时训练步数会接着上次继续计数。
-            tb_log_name="PPO_25"    # 替换为你需要继续的实验目录名
+            # tb_log_name="PPO_25_0_0"    # 替换为你需要继续的实验目录名
         )
 
         logging.info(

@@ -77,7 +77,7 @@ class TowerDefenseWorldEnv(gym.Env):
         self.max_enemy_health = 1.0 
 
         # --- 3. Observation Space ---
-        self.n_channels = 9
+        self.n_channels = 12
         
         self.observation_space = spaces.Dict({
             # CNN 输入: (Channels, Height, Width)
@@ -96,13 +96,22 @@ class TowerDefenseWorldEnv(gym.Env):
 
         # --- 4. 静态层缓存 ---
         self.tower_specs = {t["type"]: t for t in self.tower_types}
+        self.max_efficiency = max((t["dps"] / t["cost"]) for t in self.tower_types)
         
         # 路径网格 (Channel 0)
         self.path_grid = np.zeros((self.rows, self.cols), dtype=np.float32)
-        for cell in self.game_info["map"]["path_cells"]:
+        # 路径距离网格 (Channel 1)
+        self.path_distance_grid = np.zeros((self.rows, self.cols), dtype=np.float32)
+        
+        path_cells = self.game_info["map"]["path_cells"]
+        path_len = len(path_cells)
+        
+        for i, cell in enumerate(path_cells):
             c, r = self._to_grid(cell["x"], cell["y"])
             if 0 <= r < self.rows and 0 <= c < self.cols:
                 self.path_grid[r, c] = 1.0
+                # 归一化距离：起点=1.0, 终点=0.0
+                self.path_distance_grid[r, c] = (path_len - 1 - i) / max(1, path_len - 1)
 
         # 用于计算伤害增量
         self.prev_total_health = 0.0
@@ -242,24 +251,27 @@ class TowerDefenseWorldEnv(gym.Env):
 
     def __get_observation(self) -> dict:
         """
-        核心方法：生成 9 通道特征图和全局向量
+        核心方法：生成 12 通道特征图和全局向量
         """
         # 初始化 3D 网格
         grid = np.zeros((self.n_channels, self.rows, self.cols), dtype=np.float32)
         
-        # Channel 0: 路径
+        # --- 环境基准 (2 Channels) ---
+        # Ch 0: Path (路径图)
         grid[0] = self.path_grid
+        # Ch 1: Path Distance (终点距离)
+        grid[1] = self.path_distance_grid
 
-        # Mask layer (Channel 8): 初始包含路径
+        # Mask layer (Channel 10): 初始包含路径
         build_mask_layer = self.path_grid.copy()
 
-        # --- 处理塔 ---
+        # --- 处理塔 (防御布局 4 Channels + Presence 1 Channel) ---
         for tower in self.game_state["towers"]:
             c, r = self._to_grid(tower["position"]["x"], tower["position"]["y"])
             
             if 0 <= r < self.rows and 0 <= c < self.cols:
-                # Ch 1: Presence
-                grid[1, r, c] = 1.0
+                # Ch 11: Tower Presence (塔存在图)
+                grid[11, r, c] = 1.0
                 
                 # Mask Update
                 build_mask_layer[r, c] = 1.0
@@ -270,31 +282,21 @@ class TowerDefenseWorldEnv(gym.Env):
                 
                 t_range = t_spec.get("range", 0)
                 t_dps = t_spec.get("dps", 0)
+                t_cost = t_spec.get("cost", 1)
                 t_blast = t_spec.get("blast_radius", 0)
                 
-                # Ch 3: DPS (AOE 塔适当加倍)
-                norm_dps = t_dps / self.max_tower_dps
-                if t_blast > 0:
-                    norm_dps *= 1.5 
-                grid[3, r, c] = min(1.0, norm_dps)
+                # Ch 4: Invested Capital (投资分布)
+                grid[4, r, c] = t_cost / self.max_tower_cost
                 
-                # Ch 4: Cooldown
-                cd = max(0, tower["attackCooldown"])
-                grid[4, r, c] = cd / self.max_cooldown
+                # Ch 5: Efficiency (性价比)
+                efficiency = (t_dps / t_cost) / self.max_efficiency
+                grid[5, r, c] = efficiency
                 
-                # Ch 2: Range of Fire
+                # --- 空间覆盖计算 (Ch 2 & Ch 3) ---
                 range_in_cells = t_range / self.cell_size
-                
-                # 计算基础权重：归一化 DPS
                 weight = t_dps / self.max_tower_dps
                 
-                # AOE 加成：如果是有爆炸半径的塔，给予 1.5 倍权重
-                if t_blast > 0:
-                    weight *= 1.5
-                
-                # 裁剪最大值 (防止叠加后数值过大导致梯度爆炸，虽然 CNN 能抗住，但归一化更好)
-                # weight = min(5.0, weight) 
-
+                # 确定覆盖范围的矩形边界
                 r_min = max(0, int(r - range_in_cells - 1))
                 r_max = min(self.rows, int(r + range_in_cells + 2))
                 c_min = max(0, int(c - range_in_cells - 1))
@@ -304,28 +306,37 @@ class TowerDefenseWorldEnv(gym.Env):
                     for xc in range(c_min, c_max):
                         dist = ((yr - r)**2 + (xc - c)**2)**0.5
                         if dist <= range_in_cells:
+                            # Ch 2: Firepower Map (火力覆盖图)
                             grid[2, yr, xc] += weight
+                            # Ch 3: AOE Influence (群体伤害图)
+                            if t_blast > 0:
+                                grid[3, yr, xc] += weight
 
-        # --- 处理敌人 ---
+        # --- 处理敌人 (敌人威胁 4 Channels) ---
         for enemy in self.game_state["enemies"]:
             c, r = self._to_grid(enemy["position"]["x"], enemy["position"]["y"])
             
             if 0 <= r < self.rows and 0 <= c < self.cols:
-                # Ch 5: Density 敌人落在这个格子的密度，每当有一个敌人落入该格子，该格子的值就增加 0.2
-                grid[5, r, c] += 0.2
+                # Ch 6: Enemy Density (敌人密度)
+                grid[6, r, c] += 0.2
                 
-                # Ch 6: Total Health (current/full)
+                # Ch 7: Total HP (血量压力)
                 full_hp = max(1, enemy.get("fullHealth", 100))
                 hp_ratio = enemy["currentHealth"] / full_hp
-                grid[6, r, c] += hp_ratio
+                grid[7, r, c] += hp_ratio
                 
-                # Ch 7: Max Speed
+                # Ch 8: Speed Threat (速度威胁)
                 sp_ratio = enemy["currentSpeed"] / self.max_enemy_speed
-                if sp_ratio > grid[7, r, c]:
-                    grid[7, r, c] = sp_ratio
+                if sp_ratio > grid[8, r, c]:
+                    grid[8, r, c] = sp_ratio
+                
+                # Ch 9: Enemy Type (敌人类型 - 坦克标注)
+                if enemy["type"] == "tank":
+                    grid[9, r, c] = 1.0
 
-        # Ch 8: Build Mask
-        grid[8] = build_mask_layer
+        # --- 战略约束 (1 Channel) ---
+        # Ch 10: Build Mask (建造掩码)
+        grid[10] = build_mask_layer
 
         # Global Vector
         global_vec = np.array([
@@ -403,10 +414,10 @@ class TowerDefenseWorldEnv(gym.Env):
         # 5. 波次推进奖励 (Wave Progression)
         # R_wave = w_clear
         if new_game_state["waveNumber"] > old_state["waveNumber"]:
-            reward += w["wave_clear_reward"] * (old_state["waveNumber"] + 3) / 4.0
-        # 能达到第 15 波
-        if new_game_state["waveNumber"] >= 15:
-            reward += w["game_over_penalty_weight"]
+            reward += w["wave_clear_reward"] * (old_state["waveNumber"] + 3) / 5.0
+        # 引入“生存奖励” (Survival Reward)
+        else:
+            reward += 0.005
 
         # === [新增启发式奖励] ===
 
@@ -424,8 +435,9 @@ class TowerDefenseWorldEnv(gym.Env):
         
         # 8. 鼓励造 sniper (Sniper Bonus)
         # 鼓励使用高阶塔 sniper
-        sniper_count = sum(1 for t in new_game_state["towers"] if t["type"] == "sniper")
-        reward += sniper_count * 0.5
+        old_sniper_count = sum(1 for t in old_state["towers"] if t["type"] == "sniper")
+        new_sniper_count = sum(1 for t in new_game_state["towers"] if t["type"] == "sniper")
+        reward += (new_sniper_count - old_sniper_count) * 5.0
         if (money >= 30 and money < 45):
             reward += (money - 30) * w["interest_weight"] * 8  # 多余的钱也算利息奖励
             

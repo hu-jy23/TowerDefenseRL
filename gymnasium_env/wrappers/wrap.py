@@ -40,8 +40,8 @@ class SkipFrame(gym.Wrapper):
         return obs, total_reward, terminated, truncated, info
 
 def wrap_env(env, episode_recording_gap, prefix):
-    # 核心：加上 SkipFrame (skip=60 表示每 1 秒 决策一次，大幅降低乱花钱的概率)
-    env = SkipFrame(env, skip=60)
+    # 核心：加上 SkipFrame (skip=120 表示每 1 秒 决策一次，大幅降低乱花钱的概率)
+    env = SkipFrame(env, skip=120)
     
     # 监控器 (Monitor): 记录每一局的 Reward (总奖励) 和 Episode Length (步数) 到 CSV 文件。
     # CSV 文件保存在 ./models/{prefix}/monitor.csv。TensorBoard 就是读取这个文件来画 Reward 曲线的。

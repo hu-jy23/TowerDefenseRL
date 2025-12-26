@@ -397,13 +397,16 @@ class TowerDefenseWorldEnv(gym.Env):
 
         # 4. 游戏结束惩罚 (Game Over Penalty)
         # R_over = -w_g
-        if new_game_state["gameOver"]:
-            reward -= w["game_over_penalty_weight"]
+        """ if new_game_state["gameOver"]:
+            reward -= w["game_over_penalty_weight"] """
 
         # 5. 波次推进奖励 (Wave Progression)
         # R_wave = w_clear
         if new_game_state["waveNumber"] > old_state["waveNumber"]:
-            reward += w["wave_clear_reward"]
+            reward += w["wave_clear_reward"] * (old_state["waveNumber"] + 3) / 4.0
+        # 能达到第 15 波
+        if new_game_state["waveNumber"] >= 15:
+            reward += w["game_over_penalty_weight"]
 
         # === [新增启发式奖励] ===
 
@@ -422,7 +425,9 @@ class TowerDefenseWorldEnv(gym.Env):
         # 8. 鼓励造 sniper (Sniper Bonus)
         # 鼓励使用高阶塔 sniper
         sniper_count = sum(1 for t in new_game_state["towers"] if t["type"] == "sniper")
-        reward += sniper_count * 0.05
+        reward += sniper_count * 0.5
+        if (money >= 30 and money < 45):
+            reward += (money - 30) * w["interest_weight"] * 8  # 多余的钱也算利息奖励
             
         return float(reward)
 

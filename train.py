@@ -136,11 +136,9 @@ def make_model(algo: str,
                 learning_rate=CONFIG["learning_rate"],
                 gamma=CONFIG["gamma"],  # 折扣因子，越接近1越重视长期奖励
                 ent_coef=CONFIG["ent_coef"],  # 熵系数，越大越鼓励探索
-                # 3. 自定义网络架构 (可选)
-                # feature_extractor 会自动用 CNN 处理 map_input，用 MLP 处理 global_input
-                # 下面的 net_arch 是处理完提取特征后，最后决策层的网络
+                clip_range=0.2,
                 policy_kwargs=dict(
-                    net_arch=[512, 256] 
+                    net_arch=[512, 256]  # 策略网络 MLP 中间层大小
                 )
             )
         return model

@@ -437,7 +437,7 @@ class TowerDefenseWorldEnv(gym.Env):
         # 鼓励使用高阶塔 sniper
         old_sniper_count = sum(1 for t in old_state["towers"] if t["type"] == "sniper")
         new_sniper_count = sum(1 for t in new_game_state["towers"] if t["type"] == "sniper")
-        reward += (new_sniper_count - old_sniper_count) * 5.0
+        reward += (new_sniper_count - old_sniper_count) * 10.0
         if (money >= 30 and money < 45):
             reward += (money - 30) * w["interest_weight"] * 8  # 多余的钱也算利息奖励
             

@@ -69,8 +69,9 @@ mean_time_fps = CONFIG["mean_time_fps"]
 mean_episode_steps = CONFIG["mean_episode_steps"]
 env_name = CONFIG["env_name"]
 seed = CONFIG["seed"]
-training_steps = round(mean_time_fps * hours_to_train * 3600)  # total number of training steps
-episode_recording_gap = (training_steps / mean_episode_steps) // video_number  # one episode = one game
+skip_frames = CONFIG.get("skip_frames", 1)
+training_steps = round((mean_time_fps * hours_to_train * 3600) / skip_frames)  # total number of training steps (adjusted for skip_frames)
+episode_recording_gap = (training_steps / (mean_episode_steps / skip_frames)) // video_number  # one episode = one game
 if episode_recording_gap < 1:
     episode_recording_gap = 1
 
@@ -99,15 +100,15 @@ def make_env(random_maps_path: str | None,
       
     # ------ 录像和监控 Wrapper，用来保存视频和每一局的监控数据 ------ 
     # ------ 不需要录像时可注释 ------ 
-    # env = wrap_env(env, episode_gap, run_prefix)
+    env = wrap_env(env, episode_gap, run_prefix)
     
     # 使用 DummyVecEnv 包裹 (SB3 要求)
-    # env = DummyVecEnv([lambda: env])
+    env = DummyVecEnv([lambda: env])
 
     # 自动归一化 Reward 和 Observation
     # clip_obs: 限制观测值范围
     # clip_reward: 限制奖励值范围 (防止 -100 这种巨值直接冲击网络)
-    # env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
+    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
         
     return env
 

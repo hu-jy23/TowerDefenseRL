@@ -140,3 +140,47 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 # 开启 8-16 个并行环境，利用 CPU 多核加速与 Node.js 的交互
 # 这样能让 GPU 始终有数据吃，训练速度提升 5-8 倍
 env = make_vec_env(env_id, n_envs=8, vec_env_cls=SubprocVecEnv)
+```
+
+## 5. 对比试验
+
+### 算法【刘亦晨、王骁毅】
+1. DQN vs. PPO
+2. DQN vs. DQN + HRL
+3. PPO vs. PPO + HRL
+
+### 状态表示【王骁毅】
+1. 一维扁平化特征向量（MLP 提取） vs. Grid-based 特征图（CNN 提取）
+
+### 动作掩码【刘亦晨、王骁毅】
+1. 无动作掩码 vs. 有动作掩码
+
+### 奖励塑形【王骁毅】
+1. 静态奖励（baseline） vs. 伤害动态奖励
+2. 启发式奖励（比如造塔、攒钱）
+3. 权重系数
+
+### 跳帧（降低决策频率）【刘亦晨、王骁毅】
+1. 无跳帧 vs. 有跳帧
+
+### 课程学习【王骁毅】
+1. 无课程学习 vs. 有课程学习 (从简单地图到复杂地图)
+
+### DQN【刘亦晨】
+1. DQN 的不同参数配置
+
+### PPO【王骁毅】
+1. PPO 的不同参数配置
+
+### 手写 PPO / DQN【胡加怿】
+1. 手写 PPO vs. SB3 PPO
+2. 手写 DQN vs. SB3 DQN
+3. 手写 Masked DQN vs. SB3 Masked DQN
+
+### DDQN【胡加怿】
+1. DDQN vs. DQN
+
+### 泛化测试【刘亦晨】
+1. 训练集地图 vs. 测试集地图
+
+## 6. pre

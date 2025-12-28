@@ -292,6 +292,10 @@ class TowerDefenseWorldEnv(gym.Env):
                 efficiency = (t_dps / t_cost) / self.max_efficiency
                 grid[5, r, c] = efficiency
                 
+                # Channel 12: Tower Readiness (1.0 = Ready, 0.0 = Cooldown)
+                t_cooldown_ratio = tower["attackCooldown"] / t_spec["attackCooldown"]
+                grid[12, r, c] = 1.0 - t_cooldown_ratio
+                
                 # --- 空间覆盖计算 (Ch 2 & Ch 3) ---
                 range_in_cells = t_range / self.cell_size
                 weight = t_dps / self.max_tower_dps

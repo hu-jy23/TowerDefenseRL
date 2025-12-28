@@ -95,7 +95,7 @@
     pip install --upgrade pip --break-system-packages
 
     # 安装 Gymnasium, Stable-Baselines3, Tensorboard 等核心库
-    pip install --break-system-packages gymnasium==1.2.0 stable_baselines3==2.7.0 sb3_contrib==2.7.0 https://pypi.tuna.tsinghua.edu.cn/simple/
+    pip install --break-system-packages gymnasium==1.2.0 stable_baselines3==2.7.0 sb3_contrib==2.7.0 -i https://pypi.tuna.tsinghua.edu.cn/simple/
     ```
 
 3.  **✅ 检查点 4：验证 Python 环境**

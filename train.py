@@ -5,6 +5,8 @@ import gymnasium as gym
 import logging
 import datetime
 from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import EvalCallback
+from custom_callbacks.generalization_callback import GeneralizationCallback
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3 import DQN
@@ -103,12 +105,12 @@ def make_env(random_maps_path: str | None,
     env = wrap_env(env, episode_gap, run_prefix)
     
     # 使用 DummyVecEnv 包裹 (SB3 要求)
-    # env = DummyVecEnv([lambda: env])
+    env = DummyVecEnv([lambda: env])
 
     # 自动归一化 Reward 和 Observation
     # clip_obs: 限制观测值范围
     # clip_reward: 限制奖励值范围 (防止 -100 这种巨值直接冲击网络)
-    # env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
+    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
         
     return env
 
@@ -163,15 +165,48 @@ def main(load_model_path: str | None,
         format="%(asctime)s - %(levelname)s - %(message)s",     # 日志格式包含时间、级别和消息
         filemode="a",                                           # 追加模式
     )
-
-    # 创建环境
-    env = make_env(
-        random_maps_path=random_maps_path,
+    
+    # 1. 创建 [训练环境] (连接端口 3000, 加载 Maps 1-8)
+    # 注意：命令行参数 --random-maps 请传入 'train-maps.json'
+    train_env = make_env(
+        random_maps_path=random_maps_path, 
         seed_value=seed,
         episode_gap=int(episode_recording_gap),
         run_prefix=run_prefix,
-        port=port,  # 新增 port 参数传递
-        reward_config=CONFIG.get("reward_weights")  # 新增 reward_config 参数传递
+        port=port,
+        reward_config=CONFIG.get("reward_weights")
+    )
+
+    # 2. 创建 [评估环境] (连接端口 port+1000, 加载 Maps 9-10)
+    eval_env = make_env(
+        random_maps_path="test-maps.json",  # 【硬编码或新增参数指向测试集】
+        seed_value=seed + 100,              # 错开种子
+        episode_gap=0,                      # 评估通常不需要录像，或者设为大数值
+        run_prefix=None,
+        port=port + 1000,                   # 【关键】连接到测试专用的服务器端口 (训练端口 + 1000)
+        reward_config=CONFIG.get("reward_weights")
+    )
+
+    # 3. 配置 EvalCallback (核心组件)
+    # 它的作用：每隔 eval_freq 步，暂停训练，用 eval_env 跑几局
+    # 如果在 test-maps.json 上表现好，就保存为 best_model
+    eval_callback = EvalCallback(
+        eval_env,
+        best_model_save_path=f"./models/{run_prefix}/best_model/",
+        log_path=f"./models/{run_prefix}/eval_logs/",
+        eval_freq=20000,        # 每训练 2万步 进行一次测试
+        n_eval_episodes=10,     # 每次测试跑 10 局 (取平均分)
+        deterministic=True,     # 测试时关闭随机探索 (考查真实实力)
+        render=False
+    )
+    
+    # 【新增】创建 GeneralizationCallback (用于记录波次)
+    # 建议频率和 eval_callback 保持一致，这样数据点是对齐的
+    gen_callback = GeneralizationCallback(
+        eval_env=eval_env,
+        eval_freq=20000,
+        n_eval_episodes=10,
+        deterministic=True
     )
 
     # 三个回调函数
@@ -202,7 +237,7 @@ def main(load_model_path: str | None,
         # 创建或加载模型
         model = make_model(
             algo=algo,
-            env=env,
+            env=train_env,
             load_model_path=load_model_path,  # 可选加载旧模型（比如17.12.2025_22.41/ppo_tower_defense.zip）继续训练
             tensorboard_log="./logs/",
         )
@@ -213,9 +248,9 @@ def main(load_model_path: str | None,
         # 开始训练
         model.learn(
             total_timesteps=training_steps,                                                    # 训练总步数
-            callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],  # 回调函数列表，在训练过程中会被定期调用
+            callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback, eval_callback, gen_callback],  # 回调函数列表，在训练过程中会被定期调用
             reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数，not bool() 表示加载时训练步数会接着上次继续计数。
-            tb_log_name="PPO_2"    # 替换为你需要继续的实验目录名
+            # tb_log_name="PPO_2"    # 替换为你需要继续的实验目录名
         )
 
         logging.info(

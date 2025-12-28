@@ -103,12 +103,12 @@ def make_env(random_maps_path: str | None,
     env = wrap_env(env, episode_gap, run_prefix)
     
     # 使用 DummyVecEnv 包裹 (SB3 要求)
-    env = DummyVecEnv([lambda: env])
+    # env = DummyVecEnv([lambda: env])
 
     # 自动归一化 Reward 和 Observation
     # clip_obs: 限制观测值范围
     # clip_reward: 限制奖励值范围 (防止 -100 这种巨值直接冲击网络)
-    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
+    # env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
         
     return env
 
@@ -127,20 +127,20 @@ def make_model(algo: str,
         if load_model_path:
             logging.info(f"[Algo=ppo] Loading model from: {load_model_path}")
             model = MaskablePPO.load(load_model_path, env, tensorboard_log=tensorboard_log)
+            # 使用最新 CONFIG 配置中的学习率和熵系数
+            model.learning_rate = CONFIG["learning_rate"]
+            model.ent_coef = CONFIG["ent_coef"]
         else:
             logging.info("[Algo=ppo] Creating new MaskablePPO model (MlpPolicy)")
             model = MaskablePPO(
-                "MultiInputPolicy",  # 这里必须改，不再是 MlpPolicy
+                "MlpPolicy",
                 env,
                 verbose=1,
                 tensorboard_log=tensorboard_log,
                 learning_rate=CONFIG["learning_rate"],
                 gamma=CONFIG["gamma"],  # 折扣因子，越接近1越重视长期奖励
                 ent_coef=CONFIG["ent_coef"],  # 熵系数，越大越鼓励探索
-                clip_range=0.2,
-                policy_kwargs=dict(
-                    net_arch=[512, 256]  # 策略网络 MLP 中间层大小
-                )
+                clip_range=0.2
             )
         return model
 
@@ -215,7 +215,7 @@ def main(load_model_path: str | None,
             total_timesteps=training_steps,                                                    # 训练总步数
             callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],  # 回调函数列表，在训练过程中会被定期调用
             reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数，not bool() 表示加载时训练步数会接着上次继续计数。
-            # tb_log_name="PPO_25_0_0"    # 替换为你需要继续的实验目录名
+            tb_log_name="PPO_2"    # 替换为你需要继续的实验目录名
         )
 
         logging.info(

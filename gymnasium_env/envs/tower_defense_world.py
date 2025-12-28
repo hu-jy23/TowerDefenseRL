@@ -34,19 +34,20 @@ class TowerDefenseWorldEnv(gym.Env):
         }
         self.reward_weights = reward_config if reward_config else default_weights
         
-        try:
-            # 获取游戏初始化信息
-            response = requests.get(self.url + "info")
-            if response.status_code != 200:
-                raise ConnectionError(f"Failed to get game info: {response.text}")
-            self.game_info = response.json()
-        except Exception as e:
-            print(f"Server connection error: {e}")
-            raise e
+        self.render_mode = render_mode
+        self.url = f"http://localhost:{port}/"
+        # 创建 Session 复用连接，避免端口耗尽
+        self.session = requests.Session()
+        response = self.session.get(self.url + "info")
+        if response.status_code != 200:
+            raise ConnectionError(f"Failed to get game info: {response.text}")
 
-        # --- 1. 基础参数 ---
+        self.game_info = response.json()
         self.action_types = self.game_info["actions"]
         self.tower_types = self.game_info["towers"]
+        self.cell_size = self.game_info["map"]["cell_size"]
+        self.map_horizontal_cells = self.game_info["map"]["width"] // self.cell_size
+        self.map_vertical_cells = self.game_info["map"]["height"] // self.cell_size
         
         # 地图尺寸处理
         self.cell_size = self.game_info["map"]["cell_size"]
@@ -55,63 +56,36 @@ class TowerDefenseWorldEnv(gym.Env):
         self.cols = self.map_width_px // self.cell_size
         self.rows = self.map_height_px // self.cell_size
 
-        # 动作空间: [ActionType, TowerType, X, Y]
-        self.action_space = spaces.MultiDiscrete([
-            len(self.action_types), 
-            len(self.tower_types), 
-            self.cols, 
-            self.rows
-        ])
+        self.action_space = spaces.MultiDiscrete([len(self.action_types), len(self.tower_types), self.map_horizontal_cells, self.map_vertical_cells]) # action, tower type, x, y
 
-        # --- 2. 动态计算极值 ---
+        self.path_cells_coordinates_normalized = self.__normalize_path_cells()
+        self.max_towers = self.map_horizontal_cells * self.map_vertical_cells - self.game_info["map"]["path_length"] // self.cell_size
+        self.max_enemies = self.__calculate_total_enemies()
+
+        #self.global_feature_count = 4+self.map_horizontal_cells*self.map_vertical_cells # game time, wave number, money, game over, grid map
+        self.global_feature_count = 5+len(self.path_cells_coordinates_normalized) # game time, wave number, money, lives, game over, path cells coordinates
+        self.features_per_tower = 5+len(self.tower_types) # active, x, y, attack cooldown, dps, one-hot encoding type
+        self.tower_feature_count = self.max_towers * self.features_per_tower
+        self.features_per_enemy = 5+len(self.game_info["waves"]["enemy_types"]) # active, x, y, health, path progress, one-hot encoding type
+        self.enemy_feature_count = self.max_enemies * self.features_per_enemy
+
+        total_features_count = self.global_feature_count + self.tower_feature_count + self.enemy_feature_count
+        self.observation_space = spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=(total_features_count,),
+            dtype=np.float32
+        )
+
+        self.tower_type_to_index = {tower["type"]: idx for idx, tower in enumerate(self.tower_types)}
+        self.enemy_type_to_index = {enemy_type: idx for idx, enemy_type in enumerate(self.game_info["waves"]["enemy_types"])}
+        self.most_expensive_tower_cost = max(tower["cost"] for tower in self.tower_types)
+        self.max_tower_dps = max(tower["dps"] for tower in self.tower_types)
+        
         self.max_time = self.game_info["max_global_info"]["gameTime"]
         self.max_wave = self.game_info["max_global_info"]["waveNumber"]
         self.max_money = self.game_info["max_global_info"]["money"]
         self.max_lives = self.game_info["max_global_info"]["lives"]
-        
-        # 遍历所有塔类型，找到最大值
-        self.max_tower_dps = max(t["dps"] for t in self.tower_types)
-        self.max_tower_cost = max(t["cost"] for t in self.tower_types)
-        self.max_cooldown = self.game_info.get("slower_tower_sample", {}).get("attackCooldown", 3.0)
-        self.max_enemy_speed = 250.0 
-        self.max_enemy_health = 1.0 
-
-        # --- 3. Observation Space ---
-        self.n_channels = 12
-        
-        self.observation_space = spaces.Dict({
-            # CNN 输入: (Channels, Height, Width)
-            "map_input": spaces.Box(
-                low=0.0, high=float('inf'), 
-                shape=(self.n_channels, self.rows, self.cols),
-                dtype=np.float32
-            ),
-            # MLP 输入: 全局数值
-            "global_input": spaces.Box(
-                low=0.0, high=1.0,
-                shape=(5,), # time, wave, money, lives, game_over
-                dtype=np.float32
-            )
-        })
-
-        # --- 4. 静态层缓存 ---
-        self.tower_specs = {t["type"]: t for t in self.tower_types}
-        self.max_efficiency = max((t["dps"] / t["cost"]) for t in self.tower_types)
-        
-        # 路径网格 (Channel 0)
-        self.path_grid = np.zeros((self.rows, self.cols), dtype=np.float32)
-        # 路径距离网格 (Channel 1)
-        self.path_distance_grid = np.zeros((self.rows, self.cols), dtype=np.float32)
-        
-        path_cells = self.game_info["map"]["path_cells"]
-        path_len = len(path_cells)
-        
-        for i, cell in enumerate(path_cells):
-            c, r = self._to_grid(cell["x"], cell["y"])
-            if 0 <= r < self.rows and 0 <= c < self.cols:
-                self.path_grid[r, c] = 1.0
-                # 归一化距离：起点=1.0, 终点=0.0
-                self.path_distance_grid[r, c] = (path_len - 1 - i) / max(1, path_len - 1)
 
         # 用于计算伤害增量
         self.prev_total_health = 0.0
@@ -249,108 +223,45 @@ class TowerDefenseWorldEnv(gym.Env):
 
         return observation, reward, terminated, truncated, info
 
-    def __get_observation(self) -> dict:
-        """
-        核心方法：生成 12 通道特征图和全局向量
-        """
-        # 初始化 3D 网格
-        grid = np.zeros((self.n_channels, self.rows, self.cols), dtype=np.float32)
-        
-        # --- 环境基准 (2 Channels) ---
-        # Ch 0: Path (路径图)
-        grid[0] = self.path_grid
-        # Ch 1: Path Distance (终点距离)
-        grid[1] = self.path_distance_grid
+    # encodes the self game state into a tensor of shape self.observation_space.shape
+    def __get_observation(self) -> np.ndarray:
+        shape = self.observation_space.shape
+        if shape is None:
+            raise ValueError("Observation space shape is not defined")
+        observation = np.zeros(shape, dtype=np.float32)
 
-        # Mask layer (Channel 10): 初始包含路径
-        build_mask_layer = self.path_grid.copy()
+        # global features normalized
+        observation[0] = self.game_state["gameTime"] / self.game_info["max_global_info"]["gameTime"]
+        observation[1] = self.game_state["waveNumber"] / self.game_info["max_global_info"]["waveNumber"]
+        observation[2] = self.game_state["money"] / self.game_info["max_global_info"]["money"]
+        observation[3] = self.game_state["lives"] / self.game_info["max_global_info"]["lives"]
+        observation[4] = self.game_state["gameOver"]
+        observation[5:5+len(self.path_cells_coordinates_normalized)] = self.path_cells_coordinates_normalized
+        #observation[4:4+self.map_horizontal_cells*self.map_vertical_cells] = self.__calculate_grid_map()
 
-        # --- 处理塔 (防御布局 4 Channels + Presence 1 Channel) ---
-        for tower in self.game_state["towers"]:
-            c, r = self._to_grid(tower["position"]["x"], tower["position"]["y"])
-            
-            if 0 <= r < self.rows and 0 <= c < self.cols:
-                # Ch 11: Tower Presence (塔存在图)
-                grid[11, r, c] = 1.0
-                
-                # Mask Update
-                build_mask_layer[r, c] = 1.0
-                
-                # 获取塔的静态属性
-                t_type = tower["type"]
-                t_spec = self.tower_specs.get(t_type, {})
-                
-                t_range = t_spec.get("range", 0)
-                t_dps = t_spec.get("dps", 0)
-                t_cost = t_spec.get("cost", 1)
-                t_blast = t_spec.get("blast_radius", 0)
-                
-                # Ch 4: Invested Capital (投资分布)
-                grid[4, r, c] = t_cost / self.max_tower_cost
-                
-                # Ch 5: Efficiency (性价比)
-                efficiency = (t_dps / t_cost) / self.max_efficiency
-                grid[5, r, c] = efficiency
-                
-                # --- 空间覆盖计算 (Ch 2 & Ch 3) ---
-                range_in_cells = t_range / self.cell_size
-                weight = t_dps / self.max_tower_dps
-                
-                # 确定覆盖范围的矩形边界
-                r_min = max(0, int(r - range_in_cells - 1))
-                r_max = min(self.rows, int(r + range_in_cells + 2))
-                c_min = max(0, int(c - range_in_cells - 1))
-                c_max = min(self.cols, int(c + range_in_cells + 2))
-                
-                for yr in range(r_min, r_max):
-                    for xc in range(c_min, c_max):
-                        dist = ((yr - r)**2 + (xc - c)**2)**0.5
-                        if dist <= range_in_cells:
-                            # Ch 2: Firepower Map (火力覆盖图)
-                            grid[2, yr, xc] += weight
-                            # Ch 3: AOE Influence (群体伤害图)
-                            if t_blast > 0:
-                                grid[3, yr, xc] += weight
+        # tower features normalized
+        for idx, tower in enumerate(self.game_state["towers"]):
+#注意self.global_feature_count = 5+len(self.path_cells_coordinates_normalized) # game time, wave number, money, lives, game over, path cells coordinates
+            offset = self.global_feature_count + idx * self.features_per_tower
+            observation[offset] = 1 # active
+            observation[offset+1] = tower["position"]["x"] / self.game_info["map"]["width"] # normalized x
+            observation[offset+2] = tower["position"]["y"] / self.game_info["map"]["height"] # normalized y
+            observation[offset+3] = tower["attackCooldown"] / self.game_info["slower_tower_sample"]["attackCooldown"] # normalized attack cooldown
+            observation[offset+4] = self.tower_types[self.tower_type_to_index[tower["type"]]]["dps"] / self.max_tower_dps # normalized dps
+            observation[offset+5+self.tower_type_to_index[tower["type"]]] = 1 # one-hot encoding type
 
-        # --- 处理敌人 (敌人威胁 4 Channels) ---
-        for enemy in self.game_state["enemies"]:
-            c, r = self._to_grid(enemy["position"]["x"], enemy["position"]["y"])
-            
-            if 0 <= r < self.rows and 0 <= c < self.cols:
-                # Ch 6: Enemy Density (敌人密度)
-                grid[6, r, c] += 0.2
-                
-                # Ch 7: Total HP (血量压力)
-                full_hp = max(1, enemy.get("fullHealth", 100))
-                hp_ratio = enemy["currentHealth"] / full_hp
-                grid[7, r, c] += hp_ratio
-                
-                # Ch 8: Speed Threat (速度威胁)
-                sp_ratio = enemy["currentSpeed"] / self.max_enemy_speed
-                if sp_ratio > grid[8, r, c]:
-                    grid[8, r, c] = sp_ratio
-                
-                # Ch 9: Enemy Type (敌人类型 - 坦克标注)
-                if enemy["type"] == "tank":
-                    grid[9, r, c] = 1.0
+        # enemy features normalized
+        for idx, enemy in enumerate(self.game_state["enemies"]):
+            #注意self.tower_feature_count = self.max_towers * self.features_per_tower
+            offset = self.global_feature_count + self.tower_feature_count + idx * self.features_per_enemy
+            observation[offset] = 1 # active
+            observation[offset+1] = enemy["position"]["x"] / self.game_info["map"]["width"] # normalized x
+            observation[offset+2] = enemy["position"]["y"] / self.game_info["map"]["height"] # normalized y
+            observation[offset+3] = enemy["currentHealth"] / enemy["fullHealth"] # normalized health
+            observation[offset+4] = enemy["pathProgress"]
+            observation[offset+5+self.enemy_type_to_index[enemy["type"]]] = 1 # one-hot encoding type
 
-        # --- 战略约束 (1 Channel) ---
-        # Ch 10: Build Mask (建造掩码)
-        grid[10] = build_mask_layer
-
-        # Global Vector
-        global_vec = np.array([
-            self.game_state["gameTime"] / self.max_time,
-            self.game_state["waveNumber"] / self.max_wave,
-            min(1.0, self.game_state["money"] / self.max_money),
-            self.game_state["lives"] / self.max_lives,
-            1.0 if self.game_state["gameOver"] else 0.0
-        ], dtype=np.float32)
-
-        return {
-            "map_input": grid,   
-            "global_input": global_vec
-        }
+        return observation
 
     def _to_grid(self, x_px, y_px):
         return int(x_px // self.cell_size), int(y_px // self.cell_size)
@@ -531,3 +442,26 @@ class TowerDefenseWorldEnv(gym.Env):
             "gameTime": 0, "waveNumber": 0, "money": 0, "lives": 0, "gameOver": False,
             "towers": [], "enemies": []
         }
+        
+    def __normalize_path_cells(self) -> list[float]:
+        normalized_coordinates = []
+        for cell in self.game_info["map"]["path_cells"]:
+            normalized_coordinates.append(cell["x"] / self.game_info["map"]["width"])
+            normalized_coordinates.append(cell["y"] / self.game_info["map"]["height"])
+
+        return normalized_coordinates
+    
+    # worst case (assuming enemies remain alive, max number of enemies per wave and the slower spawns last):
+    # - Time between waves: T = wave delay + max enemies per wave * spawn delay
+    # - Number of actual waves: N = slower enemy time to complete path / T
+    # - Number of total enemies: = N * max enemies per wave
+    def __calculate_total_enemies(self) -> int:
+        wave_delay = self.game_info["waves"]["wave_delay"]
+        wave_max_enemies = self.game_info["waves"]["max_enemies"]
+        spawn_delay = self.game_info["waves"]["spawn_delay"]
+        slower_enemy_time = self.game_info["map"]["path_length"] / self.game_info["waves"]["slower_enemy_sample"]["currentSpeed"]
+        total_enemies = int(slower_enemy_time*wave_max_enemies/(wave_delay+spawn_delay*wave_max_enemies))
+        if slower_enemy_time < wave_delay:
+            total_enemies = wave_max_enemies
+            
+        return total_enemies

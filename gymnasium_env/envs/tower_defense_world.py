@@ -289,70 +289,54 @@ class TowerDefenseWorldEnv(gym.Env):
 
         return info
 
-    def __calculate_reward(self, new_game_state: dict) -> float:
-        """
-        计算奖励 (Heuristic + Outcome based)
-        权重读取自 self.reward_weights
-        """
-        reward = 0.0
+    # calculate the rewards based on the new game state
+    def __calculate_reward(self, new_game_state: dict) -> int:
+        reward = 0
         old_state = self.game_state
-        w = self.reward_weights
-        
-        # 1. 伤害奖励 (Damage Reward)
-        # R_dmg = w_d * damage
-        current_total_hp = self._get_total_health(new_game_state["enemies"])
-        hp_reduction = self.prev_total_health - current_total_hp
-        if hp_reduction > 0:
-            reward += hp_reduction * w["damage_weight"]
+        # + killing enemies
+        reward += max(0, len(old_state["enemies"]) - len(new_game_state["enemies"]))
 
-        # 2. 击杀奖励 (Kill Reward)
-        # R_kill = w_k * kill_count
-        kill_count = max(0, len(old_state["enemies"]) - len(new_game_state["enemies"]))
-        if kill_count > 0:
-            reward += kill_count * w["kill_weight"]
-
-        # 3. 漏怪惩罚 (Leak Penalty)
-        # R_leak = -w_l * lives_lost
-        lives_lost = old_state["lives"] - new_game_state["lives"]
-        if lives_lost > 0:
-            reward -= lives_lost * w["leak_penalty_weight"]
-
-        # 4. 游戏结束惩罚 (Game Over Penalty)
-        # R_over = -w_g
-        """ if new_game_state["gameOver"]:
-            reward -= w["game_over_penalty_weight"] """
-
-        # 5. 波次推进奖励 (Wave Progression)
-        # R_wave = w_clear
+        # + completing waves
         if new_game_state["waveNumber"] > old_state["waveNumber"]:
-            reward += w["wave_clear_reward"] * (old_state["waveNumber"] + 3) / 5.0
-        # 引入“生存奖励” (Survival Reward)
+            reward += new_game_state["waveNumber"]*2
+
+        # building towers + based on coverage and type, - penalized if no coverage
+        new_towers_count = len(new_game_state["towers"]) - len(old_state["towers"])
+        if new_towers_count > 0:
+            for i in range(new_towers_count):
+                tower = new_game_state["towers"][-i-1] # new towers are at the end of the list
+                tower_info = self.tower_types[self.tower_type_to_index[tower["type"]]]
+                path_coverage = self.__count_path_cells_in_range(tower)
+                if path_coverage == 0:
+                    reward -= 30
+                else:
+                    # 鼓励建造 cannon 和 sniper 塔：建造时给予额外奖励
+                    if tower_info["type"] in ["cannon", "sniper"]:
+                        reward += tower_info["cost"] * 2  # 可调节倍数
+                    # 原有的有效 dps 奖励
+                    blast_radius = tower_info.get("blast_radius", 0)
+                    effective_dps = tower_info["dps"]
+                    if blast_radius > 0:
+                        effective_dps *= 1.5 
+                    reward += tower_info["cost"] * effective_dps * path_coverage / 100
         else:
-            reward += 0.005
+            # 没有建塔时，如果钱接近最贵塔，鼓励攒钱
+            money = new_game_state["money"]
+            if money >= 0.4 * self.most_expensive_tower_cost and money < self.most_expensive_tower_cost:
+                reward += 10  # 可调节
 
-        # === [新增启发式奖励] ===
+        # - hoarding money uselessly
+        if new_game_state["money"] > self.most_expensive_tower_cost:
+            reward -= (new_game_state["money"] - self.most_expensive_tower_cost)
 
-        # 6. 金币利息奖励 (Interest Reward)
-        # R_eco = w_e * current_money
-        # 鼓励攒钱：每一帧持有金币都有收益
-        money = new_game_state["money"]
-        reward += money * w["interest_weight"]
+        # - lives lost
+        reward -= (old_state["lives"] - new_game_state["lives"]) * 20
 
-        # 7. 维护费惩罚 (Maintenance Penalty)
-        # R_maint = -w_m * tower_count
-        # 惩罚造塔数量，鼓励"少而精" (Sniper > 3 Archers)
-        tower_count = len(new_game_state["towers"])
-        reward -= tower_count * w["maintenance_penalty_weight"]
-        
-        # 8. 鼓励造 sniper (Sniper Bonus)
-        # 鼓励使用高阶塔 sniper
-        old_sniper_count = sum(1 for t in old_state["towers"] if t["type"] == "sniper")
-        new_sniper_count = sum(1 for t in new_game_state["towers"] if t["type"] == "sniper")
-        reward += (new_sniper_count - old_sniper_count) * 10.0
-        if (money >= 30 and money < 45):
-            reward += (money - 30) * w["interest_weight"] * 8  # 多余的钱也算利息奖励
-            
-        return float(reward)
+        # - game over, for the illegal actions the penalty is given in step()
+        if new_game_state["gameOver"]:
+            reward -= 1000
+
+        return round(reward)
 
     def action_masks(self) -> np.ndarray:
         action_mask = np.ones(len(self.action_types), dtype=bool)
@@ -465,3 +449,24 @@ class TowerDefenseWorldEnv(gym.Env):
             total_enemies = wave_max_enemies
             
         return total_enemies
+    
+    # counts how many path cells are in range of the tower
+    def __count_path_cells_in_range(self, tower: dict) -> int:
+        count = 0
+        tower_index = self.tower_type_to_index[tower["type"]]
+        tower_range = self.game_info["towers"][tower_index]["range"]
+
+        # create a bounding box to quickly discard most path cells
+        min_x = tower["position"]["x"] - tower_range
+        max_x = tower["position"]["x"] + tower_range
+        min_y = tower["position"]["y"] - tower_range
+        max_y = tower["position"]["y"] + tower_range
+
+        for path_cell in self.game_info["map"]["path_cells"]:
+            # check if the cell is within the bounding box
+            if min_x < path_cell["x"] < max_x and min_y < path_cell["y"] < max_y:
+                distance = (tower["position"]["x"] - path_cell["x"])**2 + (tower["position"]["y"] - path_cell["y"])**2
+                if distance < tower_range**2:
+                    count += 1
+
+        return count

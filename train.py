@@ -216,7 +216,7 @@ def main(load_model_path: str | None,
             total_timesteps=training_steps,                                                    # 训练总步数
             callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],  # 回调函数列表，在训练过程中会被定期调用
             reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数，not bool() 表示加载时训练步数会接着上次继续计数。
-            tb_log_name="PPO_1_0"    # 替换为你需要继续的实验目录名
+            # tb_log_name="PPO_1_0"    # 替换为你需要继续的实验目录名
         )
 
         logging.info(

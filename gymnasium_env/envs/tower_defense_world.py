@@ -77,7 +77,7 @@ class TowerDefenseWorldEnv(gym.Env):
         self.max_enemy_health = 1.0 
 
         # --- 3. Observation Space ---
-        self.n_channels = 12
+        self.n_channels = 13
         
         self.observation_space = spaces.Dict({
             # CNN 输入: (Channels, Height, Width)
@@ -293,7 +293,9 @@ class TowerDefenseWorldEnv(gym.Env):
                 grid[5, r, c] = efficiency
                 
                 # Channel 12: Tower Readiness (1.0 = Ready, 0.0 = Cooldown)
-                t_cooldown_ratio = tower["attackCooldown"] / t_spec["attackCooldown"]
+                if (t_type == 'archer'): maxAttackCooldown = 1.0
+                else: maxAttackCooldown = 2.0
+                t_cooldown_ratio = tower["attackCooldown"] / maxAttackCooldown
                 grid[12, r, c] = 1.0 - t_cooldown_ratio
                 
                 # --- 空间覆盖计算 (Ch 2 & Ch 3) ---

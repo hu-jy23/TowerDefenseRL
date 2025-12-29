@@ -4,6 +4,7 @@ import gymnasium_env.envs  # ensure the custom environment is registered
 import gymnasium as gym
 import logging
 import datetime
+from stable_baselines3.common.utils import get_schedule_fn
 from stable_baselines3.common.callbacks import CheckpointCallback
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
@@ -96,19 +97,19 @@ def make_env(random_maps_path: str | None,
         with open(random_maps_path, "r") as f:
             data = json.load(f)
         env.reset(seed=seed_value)  # 只需要在最开始执行一次，之后不需要传入 seed，会用最开始 seed 产生的一系列序列
-        env = RandomMapWrapper(env, map_list=data)
+        env = RandomMapWrapper(env, map_list=data, port=port)
       
     # ------ 录像和监控 Wrapper，用来保存视频和每一局的监控数据 ------ 
     # ------ 不需要录像时可注释 ------ 
     env = wrap_env(env, episode_gap, run_prefix)
     
     # 使用 DummyVecEnv 包裹 (SB3 要求)
-    # env = DummyVecEnv([lambda: env])
+    env = DummyVecEnv([lambda: env])
 
     # 自动归一化 Reward 和 Observation
     # clip_obs: 限制观测值范围
     # clip_reward: 限制奖励值范围 (防止 -100 这种巨值直接冲击网络)
-    # env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
+    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
         
     return env
 
@@ -128,7 +129,7 @@ def make_model(algo: str,
             logging.info(f"[Algo=ppo] Loading model from: {load_model_path}")
             model = MaskablePPO.load(load_model_path, env, tensorboard_log=tensorboard_log)
             # 使用最新 CONFIG 配置中的学习率和熵系数
-            model.learning_rate = CONFIG["learning_rate"]
+            model.lr_schedule = get_schedule_fn(CONFIG["learning_rate"])
             model.ent_coef = CONFIG["ent_coef"]
         else:
             logging.info("[Algo=ppo] Creating new MaskablePPO model (MlpPolicy)")
@@ -215,7 +216,7 @@ def main(load_model_path: str | None,
             total_timesteps=training_steps,                                                    # 训练总步数
             callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],  # 回调函数列表，在训练过程中会被定期调用
             reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数，not bool() 表示加载时训练步数会接着上次继续计数。
-            tb_log_name="PPO_2"    # 替换为你需要继续的实验目录名
+            tb_log_name="PPO_1_0"    # 替换为你需要继续的实验目录名
         )
 
         logging.info(

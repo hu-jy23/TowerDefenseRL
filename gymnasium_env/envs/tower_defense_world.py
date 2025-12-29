@@ -119,52 +119,63 @@ class TowerDefenseWorldEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         
-        # === [升级版] 模拟专家课程 (Simulated Expert Curriculum) ===
+        # === 模拟专家课程 (Simulated Expert Curriculum) ===
         rand_val = np.random.random()
         reset_payload = {}
 
         # 坐标配置 (与前端 game.ts 保持严格一致)
-        # 注意: 如果 Python 端和 TypeScript 端地图坐标系一致，直接用像素坐标
         scenario_1_towers = [
-            {"type": "cannon", "x": 275, "y": 425}, # 核心拐角
-            {"type": "cannon", "x": 325, "y": 425}, # 核心拐角
-            {"type": "archer", "x": 725, "y": 175}, # 终点防守
-            {"type": "archer", "x": 725, "y": 225}  # 终点防守
+            {"type": "archer", "x": 725, "y": 175},
+            {"type": "archer", "x": 725, "y": 225}
         ]
         
         scenario_2_towers = [
             {"type": "archer", "x": 725, "y": 175},
-            {"type": "archer", "x": 725, "y": 225}
+            {"type": "archer", "x": 725, "y": 225},
+            {"type": "cannon", "x": 325, "y": 225}
+        ]
+        
+        scenario_4_towers = [
+            {"type": "archer", "x": 725, "y": 175},
+            {"type": "archer", "x": 725, "y": 225},
+            {"type": "cannon", "x": 325, "y": 225},
+            
+            {"type": "cannon", "x": 125, "y": 375},
+            {"type": "sniper", "x": 275, "y": 225},
+            {"type": "sniper", "x": 475, "y": 425},
+            
+            {"type": "sniper", "x": 275, "y": 275},
+            {"type": "sniper", "x": 225, "y": 275}
         ]
 
-        if rand_val < 0: 
-            # [模式 A: 专家残局 - 学习造 Sniper] (40% 概率)
-            # 场景: Wave 9, 62块, 已有火力基础
-            # 目标: 配合 Mask, Agent 只能买 Sniper, 体验后期高回报
+        if rand_val < 0.2: 
+            # 场景 1: 前期，第 4 波打完后
             reset_payload = {
-                "start_wave": 9,
-                "start_money": 62,
+                "start_wave": 4,
+                "start_money": 40,
                 "prebuilt_towers": scenario_1_towers
             }
-            # print(f"[Curriculum] Scenario 1: Expert Late Game")
             
-        elif rand_val < 0:
-            # [模式 B: 过渡残局 - 学习造 Cannon] (30% 概率)
-            # 场景: Wave 6, 40块, 只有基础弓
-            # 目标: 配合 Mask, Agent 必须买 Cannon 才能守住怪群
+        elif rand_val < 0.5:
+            # 场景 2: 中期挑战 (第 7 波打完后)
             reset_payload = {
-                "start_wave": 6,
-                "start_money": 40,
+                "start_wave": 7,
+                "start_money": 74,
                 "prebuilt_towers": scenario_2_towers
             }
-            # print(f"[Curriculum] Scenario 2: Mid Game Transition")
+            
+        elif rand_val < 0.8:
+            # 场景 4: 后期挑战 (第 14 波打完后)
+            reset_payload = {
+                "start_wave": 14,
+                "start_money": 62,
+                "prebuilt_towers": scenario_4_towers
+            }
             
         else:
-            # [模式 C: 正常开局 - 综合大考] (30% 概率)
+            # 正常开局 - 综合大考
             # 场景: Wave 0, 40块, 空地
-            # 目标: 检验是否学会了前期的克制和后期的爆发
             reset_payload = {}
-            # print(f"[Curriculum] Normal Start")
 
         try:
             response = requests.post(self.url + "reset", json=reset_payload)

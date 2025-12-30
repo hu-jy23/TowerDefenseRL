@@ -184,3 +184,81 @@ env = make_vec_env(env_id, n_envs=8, vec_env_cls=SubprocVecEnv)
 1. 训练集地图 vs. 测试集地图
 
 ## 6. pre
+
+【胡加怿】
+
+### Part 1：游戏环境
+窗口卡的比较死
+
+### Part 2：塔防的一些性质造成的困难
+要解决的困难：
+1. 巨大且离散的动作空间
+2. 稀疏且延迟的奖励（重点）
+
+我们比较的两个方法赛道：
+1. PPO
+2. DQN
+
+baseline：【baseline 模型 PPO + DQN（缺！！！！！！）】
+- 状态用 MLP 处理
+- 静态奖励  -> baseline PPO, DQN
+
+baseline 我们遇到了什么问题？
+- 平均波次上不去
+- 波动很大
+- 不攒钱，几乎不会造 cannon 和 sniper
+- archer 位置好不好？
+
+启发式奖励：我们尝试加大对造cannon、sniper的奖励，结果发现效果并不好。（lyc加的奖励）为什么？
+
+【PPO-baseline-29.12.2025_21.09-no-skip-lyc-reward 模型】【DQN-baseline-skip-0-gamma-0.99999-reward-using-lyc 模型】
+- 原因1：因为动作过于频繁，而agent从20元攒到30元的过程中，会经历很多次动作的选择，epsilon经过时间的衰减，导致agent很容易在某一个动作上选择造archer。而一旦造了archer，钱就不够造cannon和sniper了。
+- 原因2：根本没有机会造cannon和sniper，因为水平太低，导致根本攒不到钱，从没尝试过建这些塔的动作。
+- 原因3：agent只要造塔就有更大的可能去消灭敌人，从而获得奖励，而不造塔（在攒钱）就很难消灭敌人，获得奖励的可能性就很小，导致agent更倾向于造archer。
+
+- 原因1 -> 跳帧，原因2 -> 课程学习 / 掩码，原因3 -> 攒钱的奖励（动态奖励）
+
+----
+
+【刘亦晨】
+
+为此，我们想到了一些trick来解决这些问题：引入了跳帧。跳帧的效果有显著的提升。
+
+【skip-60-gamma-0.99999-reward-using-lyc 模型（缺！！！！！！）】【skip-120-gamma-0.99999-reward-using-lyc 模型（没上传！！！！！！）】
+【skip-180-gamma-0.99999-reward-using-lyc 模型（缺！！！！！！）】
+- 原因：跳帧使得agent的动作频率降低，减少了动作选择的次数，从而减少了epsilon贪婪策略带来的影响。跳帧后，agent有更多的时间攒钱，从而有机会尝试造cannon和sniper。
+
+引入原因：DQN没有maskable，本来是reward上事后禁止一些动作的选择（软禁止、抑制），用掩码可以事前禁止。
+
+【MaskableDQN-skip-120-gamma-0.99999-reward-using-lyc 模型（缺！！！！！！）】
+
+【手写 MaskableDQN 类】在跳帧的基础上，我们引入了强制性的掩码。掩码强制让agent在第4-8波不造任何塔，从而能够充分的攒钱。掩码的效果也有显著提升。
+
+如果不好，那你就说 DQN + heuristic agent 吧。
+
+【DQN-hierarchichy-lyc 模型】
+
+经过调研，我们发现DQN+分层的方法也可以解决动作空间过大的问题，使agent能够专注于造哪种塔，至于塔放哪个位置由启发式决定。我们尝试了分层的方法，效果也不错。
+
+分层不同超参数。
+
+---
+
+【wxy】
+
+PPO+CNN：【MaskablePPO-baseline-lyc-reward-CNN 模型】
+
+我们引入了动态奖励。鼓励攒钱、少造塔，动态奖励的效果也有显著提升。
+
+【MaskablePPO-baseline-damage-reward 模型】
+
+最后我们得到了PPO+动态奖励+掩码+跳帧训出的模型能到达22波，在这个基础上，取消所有人为的因素（掩码、启发式奖励），模型依然能到达21波。
+
+【MaskablePPO-baseline-damage-reward-best 模型】
+
+除此之外我们还尝试了课程学习，....
+【MaskablePPO-CNN-curriculum 模型（缺！！！！！！！）】
+
+最后在使用了以上这些机制的基础上，我们对各种超参数进行了调整与比较。
+
+

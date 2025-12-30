@@ -148,7 +148,7 @@ class TowerDefenseWorldEnv(gym.Env):
             {"type": "sniper", "x": 225, "y": 275}
         ]
 
-        if rand_val < 0.2: 
+        if rand_val < 0: 
             # 场景 1: 前期，第 4 波打完后
             reset_payload = {
                 "start_wave": 4,
@@ -156,7 +156,7 @@ class TowerDefenseWorldEnv(gym.Env):
                 "prebuilt_towers": scenario_1_towers
             }
             
-        elif rand_val < 0.5:
+        elif rand_val < 0:
             # 场景 2: 中期挑战 (第 7 波打完后)
             reset_payload = {
                 "start_wave": 7,
@@ -164,7 +164,7 @@ class TowerDefenseWorldEnv(gym.Env):
                 "prebuilt_towers": scenario_2_towers
             }
             
-        elif rand_val < 0.8:
+        elif rand_val < 0:
             # 场景 4: 后期挑战 (第 14 波打完后)
             reset_payload = {
                 "start_wave": 14,

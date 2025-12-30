@@ -81,7 +81,8 @@ def make_env(random_maps_path: str | None,
              episode_gap: int = int(episode_recording_gap),
              run_prefix: str | None = None,
              port: int = 3000,
-             reward_config: dict | None = None):  # 新增 reward_config 参数
+             reward_config: dict | None = None,  # 新增 reward_config 参数
+             load_stats_path: str | None = None):  # 新增 load_stats_path 参数
     """
     创建并返回环境。
     """
@@ -108,7 +109,12 @@ def make_env(random_maps_path: str | None,
     # 自动归一化 Reward 和 Observation
     # clip_obs: 限制观测值范围
     # clip_reward: 限制奖励值范围 (防止 -100 这种巨值直接冲击网络)
-    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
+    if load_stats_path and os.path.exists(load_stats_path):
+        print(f"Loading VecNormalize stats from {load_stats_path}")
+        env = VecNormalize.load(load_stats_path, env)
+        # 如果是继续训练，通常建议保持 norm_obs/reward 为 True
+    else:
+        env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
         
     return env
 
@@ -167,6 +173,12 @@ def main(load_model_path: str | None,
         filemode="a",                                           # 追加模式
     )
 
+    # 统计信息
+    stats_path = None
+    if load_model_path:
+        # 假设统计数据和模型在同一个目录下
+        stats_path = os.path.join(os.path.dirname(load_model_path), "vec_normalize.pkl")
+
     # 创建环境
     env = make_env(
         random_maps_path=random_maps_path,
@@ -174,7 +186,8 @@ def main(load_model_path: str | None,
         episode_gap=int(episode_recording_gap),
         run_prefix=run_prefix,
         port=port,  # 新增 port 参数传递
-        reward_config=CONFIG.get("reward_weights")  # 新增 reward_config 参数传递
+        reward_config=CONFIG.get("reward_weights"),  # 新增 reward_config 参数传递
+        load_stats_path=stats_path
     )
 
     # 三个回调函数
@@ -229,6 +242,9 @@ def main(load_model_path: str | None,
         # 保存最终模型
         model.save(f"./models/{run_prefix}/{algo}_tower_defense.zip")
         logging.info(f"Model saved in: ./models/{run_prefix}/{algo}_tower_defense.zip")
+        # 保存 VecNormalize 统计数据
+        env.save(f"./models/{run_prefix}/vec_normalize.pkl") 
+        logging.info(f"Model and stats saved in: ./models/{run_prefix}/")
 
         # 保存最佳 episode 的动作序列
         best_performance_data = save_actions_callback.get_best_agent_performance()

@@ -13,7 +13,11 @@ class RandomMapWrapper(gym.Wrapper):
         selected_map_index = self.env.unwrapped.np_random.integers(0, len(self.map_list))
         
         # 发送 HTTP POST 请求将选中的地图数据传给游戏服务器。
-        response = requests.post(self.url + "set-map", json=self.map_list[selected_map_index]["waypoints"])
+        session = getattr(self.env.unwrapped, "session", requests)
+        response = session.post(
+            self.url + "set-map",
+            json=self.map_list[selected_map_index]["waypoints"],
+        )
         if response.status_code != 200:
             print(f"Error setting map: {response.text}")
 

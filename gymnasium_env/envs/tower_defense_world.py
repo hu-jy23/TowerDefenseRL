@@ -20,6 +20,11 @@ class TowerDefenseWorldEnv(gym.Env):
     def __init__(self, render_mode="rgb_array", reward_config=None, port=3000):
         self.render_mode = render_mode
         self.url = f"http://localhost:{port}/"
+        self.debug = False
+        self.debug_every = 1
+        self._debug_step = 0
+        self._last_wave = None
+        self._last_lives = None
         
         # [新增] 初始化奖励权重
         # 如果没有传入配置，使用硬编码的默认值作为兜底
@@ -34,9 +39,11 @@ class TowerDefenseWorldEnv(gym.Env):
         }
         self.reward_weights = reward_config if reward_config else default_weights
         
+        self.session = requests.Session()
+
         try:
             # 获取游戏初始化信息
-            response = requests.get(self.url + "info")
+            response = self.session.get(self.url + "info")
             if response.status_code != 200:
                 raise ConnectionError(f"Failed to get game info: {response.text}")
             self.game_info = response.json()
@@ -119,69 +126,26 @@ class TowerDefenseWorldEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         
-        # === 模拟专家课程 (Simulated Expert Curriculum) ===
-        rand_val = np.random.random()
-        reset_payload = {}
-
-        # 坐标配置 (与前端 game.ts 保持严格一致)
-        scenario_1_towers = [
-            {"type": "archer", "x": 725, "y": 175},
-            {"type": "archer", "x": 725, "y": 225}
-        ]
-        
-        scenario_2_towers = [
-            {"type": "archer", "x": 725, "y": 175},
-            {"type": "archer", "x": 725, "y": 225},
-            {"type": "cannon", "x": 325, "y": 225}
-        ]
-        
-        scenario_4_towers = [
-            {"type": "archer", "x": 725, "y": 175},
-            {"type": "archer", "x": 725, "y": 225},
-            {"type": "cannon", "x": 325, "y": 225},
-            
-            {"type": "cannon", "x": 125, "y": 375},
-            {"type": "sniper", "x": 275, "y": 225},
-            {"type": "sniper", "x": 475, "y": 425},
-            
-            {"type": "sniper", "x": 275, "y": 275},
-            {"type": "sniper", "x": 225, "y": 275}
-        ]
-
-        if rand_val < 0.2: 
-            # 场景 1: 前期，第 4 波打完后
-            reset_payload = {
-                "start_wave": 4,
-                "start_money": 40,
-                "prebuilt_towers": scenario_1_towers
-            }
-            
-        elif rand_val < 0.5:
-            # 场景 2: 中期挑战 (第 7 波打完后)
-            reset_payload = {
-                "start_wave": 7,
-                "start_money": 74,
-                "prebuilt_towers": scenario_2_towers
-            }
-            
-        elif rand_val < 0.8:
-            # 场景 4: 后期挑战 (第 14 波打完后)
-            reset_payload = {
-                "start_wave": 14,
-                "start_money": 62,
-                "prebuilt_towers": scenario_4_towers
-            }
-            
-        else:
-            # 正常开局 - 综合大考
-            # 场景: Wave 0, 40块, 空地
-            reset_payload = {}
+        # 固定从第 0 波开始
+        reset_payload = {"start_wave": 0}
 
         try:
-            response = requests.post(self.url + "reset", json=reset_payload)
+            response = self.session.post(self.url + "reset", json=reset_payload)
             if response.status_code != 200:
                 raise ConnectionError(f"Failed to reset game: {response.text}")
             self.game_state = response.json()
+            if self.debug:
+                self._debug_step = 0
+                self._last_wave = self.game_state.get("waveNumber")
+                self._last_lives = self.game_state.get("lives")
+                print(f"Reset payload: {reset_payload}")
+                print(
+                    "Reset state:",
+                    f"wave={self.game_state.get('waveNumber')}",
+                    f"money={self.game_state.get('money')}",
+                    f"lives={self.game_state.get('lives')}",
+                    f"towers={len(self.game_state.get('towers', []))}",
+                )
             
             # 初始化血量追踪
             self.prev_total_health = self._get_total_health(self.game_state["enemies"])
@@ -227,19 +191,55 @@ class TowerDefenseWorldEnv(gym.Env):
 
         self.current_episode_actions.append(deepcopy(game_action))
 
-        response = requests.post(self.url + "step", json=game_action)
+        if self.debug:
+            self._debug_step += 1
+        log_step = (
+            self.debug
+            and self.debug_every > 0
+            and self._debug_step % self.debug_every == 0
+        )
+
+        response = self.session.post(self.url + "step", json=game_action)
         
         # 非法错误情况: 建塔位置在路径上或已被占用，或玩家资金不足
         if response.status_code != 200:
+            if self.debug:
+                print(
+                    f"[step {self._debug_step}] invalid action",
+                    f"status={response.status_code}",
+                    f"action={game_action}",
+                )
             observation = self.__get_observation()
             info = self.__get_info()
             # 给予惩罚并保持状态
             return observation, -0.1, False, False, info
 
         new_game_state = response.json()
-        
+        if self.debug and (log_step or game_action.get("type") == "BUILD_TOWER"):
+            print(
+                f"[step {self._debug_step}] action={game_action}",
+                f"wave={new_game_state.get('waveNumber')}",
+                f"money={new_game_state.get('money')}",
+                f"lives={new_game_state.get('lives')}",
+                f"towers={len(new_game_state.get('towers', []))}",
+                f"enemies={len(new_game_state.get('enemies', []))}",
+            )
+
         # 计算奖励
         reward = self.__calculate_reward(new_game_state)
+
+        if self.debug:
+            wave = new_game_state.get("waveNumber")
+            lives = new_game_state.get("lives")
+            if wave != self._last_wave or lives != self._last_lives:
+                print(
+                    f"[step {self._debug_step}] state change",
+                    f"wave={wave}",
+                    f"lives={lives}",
+                    f"money={new_game_state.get('money')}",
+                )
+                self._last_wave = wave
+                self._last_lives = lives
         
         # 更新状态
         self.game_state = new_game_state
@@ -530,7 +530,7 @@ class TowerDefenseWorldEnv(gym.Env):
 
         if self.render_mode == "rgb_array":
             try:
-                res = requests.get(self.url + "render")
+                res = self.session.get(self.url + "render")
                 if res.status_code == 200:
                     img = Image.open(io.BytesIO(res.content))
                     if img.size != (target_w, target_h):
@@ -541,7 +541,10 @@ class TowerDefenseWorldEnv(gym.Env):
         return black_frame
     
     def close(self):
-        pass
+        try:
+            self.session.close()
+        except Exception:
+            pass
 
     def _get_empty_state(self):
         return {

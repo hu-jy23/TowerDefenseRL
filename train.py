@@ -13,6 +13,7 @@ from gymnasium_env.wrappers.wrap import wrap_env
 from gymnasium_env.wrappers.flatten_multidiscrete import FlattenMultiDiscreteAction
 from custom_callbacks.tensor_board_info import TensorboardInfoCallback
 from custom_callbacks.save_agent_actions import SaveAgentActionsCallback
+from custom_callbacks.visual_cnn_callback import VisualCNNCallback
 import argparse
 import json
 
@@ -202,6 +203,8 @@ def main(load_model_path: str | None,
     # 保存最佳对局: 如果发现当前这一局的波数比历史最高记录还高，它就会把这一局的所有动作序列存下来。
     # 训练结束后，可以用 replay_actions.py 直接重播“最高分”对局。
     save_actions_callback = SaveAgentActionsCallback()
+    # CNN 通道可视化回调: 在第 17 波时记录并绘制 13 个通道的特征图。
+    visual_cnn_callback = VisualCNNCallback(save_dir_base=f"./models/{run_prefix}/")
 
     try:
         # 记录训练开始信息到日志 trainning.log 里
@@ -229,9 +232,9 @@ def main(load_model_path: str | None,
         # 开始训练
         model.learn(
             total_timesteps=training_steps,                                                    # 训练总步数
-            callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback],  # 回调函数列表，在训练过程中会被定期调用
+            callback=[checkpoint_callback, tensorboard_info_callback, save_actions_callback, visual_cnn_callback],  # 回调函数列表，在训练过程中会被定期调用
             reset_num_timesteps=not bool(load_model_path),                                     # 如果是加载旧模型继续训练，是否重置训练步数，not bool() 表示加载时训练步数会接着上次继续计数。
-            # tb_log_name="PPO_41"    # 替换为你需要继续的实验目录名
+            tb_log_name="PPO_42_0_0_0_0"    # 替换为你需要继续的实验目录名
         )
 
         logging.info(

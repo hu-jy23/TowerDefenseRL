@@ -383,6 +383,8 @@ class TowerDefenseWorldEnv(gym.Env):
         info = {}
         info["game_time"] = round(self.game_state["gameTime"])
         info["wave_number"] = self.game_state["waveNumber"]
+        info["money"] = self.game_state["money"]
+        info["lives"] = self.game_state["lives"]
         
         # 统计每种塔的数量
         info["tower_counts"] = {t["type"]: 0 for t in self.tower_types}
